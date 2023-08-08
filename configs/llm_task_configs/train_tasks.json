@@ -1,0 +1,14 @@
+{
+    "NER_LLM": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "Fewnerd"
+        }
+    ],
+    "NER_TF": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "Fewnerd"
+        }
+    ]
+}

@@ -1,0 +1,66 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "ACE 2005_sample_15000"
+        }
+    ],
+    "NER_TF": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "ACE 2005_sample_15000"
+        }
+    ],
+    "ET": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "ACE 2005_sample_15000"
+        }
+    ],
+    "EET": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "ACE05"
+        }
+    ],
+    "EE": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "ACE05"
+        }
+    ],
+    "ETRIG": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "ACE05"
+        }
+    ],
+    "EET_TF": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "ACE05"
+        }
+    ],
+    "EXAMPLE_EET": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "ACE05"
+        }
+    ],
+    "EXAMPLE_NER": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "ACE05"
+        }
+    ],
+    "EXPLAIN": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "SCHEMA"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "TASK"
+        }
+    ]
+}

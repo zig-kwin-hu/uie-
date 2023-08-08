@@ -1,0 +1,14 @@
+{
+    "EET": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "ACE05"
+        }
+    ],
+    "NER": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "ACE 2005_sample_15000"
+        }
+    ]
+}

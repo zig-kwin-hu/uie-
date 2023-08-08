@@ -1,0 +1,8 @@
+{
+    "NER_LLM": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "Fewnerd"
+        }
+    ]
+}

@@ -1,8 +1,8 @@
 {
     "NER": [
         {
-            "sampling strategy": "random",
-            "dataset name": "ACE 2004"
+            "sampling strategy": "full",
+            "dataset name": "ACE 2004_sample_15000"
         },
         {
             "sampling strategy": "full",

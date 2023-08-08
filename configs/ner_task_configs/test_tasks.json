@@ -1,7 +1,7 @@
 {
     "NER": [
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "ACE 2004"
         },
         {
@@ -9,23 +9,23 @@
             "dataset name": "ACE 2005_sample_15000"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "AnatEM"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "bc2gm"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "bc4chemd"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "bc5cdr"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "Broad Tweet Corpus"
         },
         {
@@ -33,35 +33,35 @@
             "dataset name": "CoNLL 2003_sample_15000"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "FabNER"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "FindVehicle"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "GENIA_NER"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "HarveyNER"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "mit-movie"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "mit-restaurant"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "MultiNERD"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "ncbi"
         },
         {
@@ -69,7 +69,7 @@
             "dataset name": "Ontonotes_sample_30000"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "PolyglotNER"
         },
         {
@@ -77,11 +77,11 @@
             "dataset name": "TweetNER7_sample_15000"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "WikiANN en"
         },
         {
-            "sampling strategy": "random",
+            "sampling strategy": "full",
             "dataset name": "WikiNeural"
         }
     ]
