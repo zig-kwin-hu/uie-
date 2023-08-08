@@ -6,8 +6,8 @@ from transformers.data.data_collator import *
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_DECODER_MODELS = ['codegen', 'bloomz', 'gpt-neox']
-SUPPORTED_SEQ2SEQ_MODELS = ['t5', 'flan-t5']
+SUPPORTED_DECODER_MODELS = ['codegen', 'bloomz', 'gpt-neox', 'llama']
+SUPPORTED_SEQ2SEQ_MODELS = ['t5', 'flan-t5', 'ZWK/InstructUIE']
 
 
 def check_model(model_name, supported_models):
@@ -34,6 +34,7 @@ class DataCollatorForUIE:
     text_only: bool = False
     num_examples: int = 0
     input_record_file: str = None
+    return_loss_mask: bool = True
 
     def __call__(self, batch, return_tensors=None):
         if return_tensors is None:
@@ -106,7 +107,8 @@ class DataCollatorForUIE:
                 padding=self.padding,
                 return_tensors=return_tensors,
                 truncation=True,
-                pad_to_multiple_of=self.pad_to_multiple_of
+                pad_to_multiple_of=self.pad_to_multiple_of,
+                return_token_type_ids=False
             )
             with self.tokenizer.as_target_tokenizer():
                 labels = self.tokenizer(
@@ -146,7 +148,7 @@ class DataCollatorForUIE:
             instruction = self.get_instruction(instance)
 
             # add bos and eos
-            task_input = self.tokenizer.bos_token + instruction
+            task_input = instruction
             label = label + self.tokenizer.eos_token
 
             tokenized_input = self.tokenizer(task_input)["input_ids"]
@@ -189,18 +191,20 @@ class DataCollatorForUIE:
                 padding=self.padding,
                 return_tensors=return_tensors,
                 truncation=True,
-                pad_to_multiple_of=self.pad_to_multiple_of
+                pad_to_multiple_of=self.pad_to_multiple_of,
+                return_token_type_ids=False
             )
 
             label_mask = model_inputs["attention_mask"].bool()
             model_inputs["labels"] = model_inputs['input_ids'].masked_fill(~label_mask, self.label_pad_token_id)
 
-            # loss mask
-            max_len = min(max_len, limit_input_len)
-            loss_mask = torch.ones((label_mask.shape))
-            for k, label_len in enumerate(label_lens):
-                loss_mask[k, : max_len - label_len - 1] = 0
-            model_inputs['loss_mask'] = loss_mask.masked_fill(~label_mask, 0)
+            if self.return_loss_mask:
+                # loss mask
+                max_len = min(max_len, limit_input_len)
+                loss_mask = torch.ones((label_mask.shape))
+                for k, label_len in enumerate(label_lens):
+                    loss_mask[k, : max_len - label_len - 1] = 0
+                model_inputs['loss_mask'] = loss_mask.masked_fill(~label_mask, 0)
 
             self._save_samples(model_inputs, sources, labels)
 
@@ -222,6 +226,13 @@ class DataCollatorForUIE:
                     f.write(mask_label+'\n\n')
         else:
             with open(self.input_record_file, 'a+', encoding='utf-8') as f:
-                for text, label in zip(sources, labels['input_ids']):
+                need_decode = False
+                if hasattr(labels, 'input_ids'):
+                    labels = labels['input_ids']
+                    need_decode = True
+                
+                for text, label in zip(sources, labels):
                     f.write(text + '\n')
-                    f.write(self.tokenizer.decode(label, clean_up_tokenization_spaces=False) + '\n')
+                    if need_decode:
+                        label = self.tokenizer.decode(label, clean_up_tokenization_spaces=False)
+                    f.write(label + '\n')

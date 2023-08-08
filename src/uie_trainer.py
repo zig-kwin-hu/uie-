@@ -8,7 +8,7 @@ from uie_collator import SUPPORTED_DECODER_MODELS, check_model
 from uie_dataset import ANSWER_PREFIX
 
 
-def skip_instructions(model, predictions_ids, tokenizer, ignore_idx=-100):
+def skip_instructions(model, predictions_ids, tokenizer, dataset, ignore_idx=-100):
     predictions_ids = np.where(predictions_ids == ignore_idx, tokenizer.pad_token_id, predictions_ids)
 
     predictions = tokenizer.batch_decode(
@@ -17,10 +17,10 @@ def skip_instructions(model, predictions_ids, tokenizer, ignore_idx=-100):
 
     final_predictions = []
     if check_model(model.config._name_or_path, SUPPORTED_DECODER_MODELS):
-        for pred in predictions:
+        for example, pred in zip(dataset, predictions):
 
-            if ANSWER_PREFIX in pred:
-                splits = pred.split(ANSWER_PREFIX)
+            if example['Instance']['answer_prefix'] in pred:
+                splits = pred.split(example['Instance']['answer_prefix'])
                 final_predictions.append(splits[-1].strip())
             else:
                 final_predictions.append('')
@@ -49,6 +49,23 @@ class DenserEvalCallback(TrainerCallback):
 
         return control
 
+class SavePeftModelCallback(TrainerCallback):
+    
+    def on_save(
+        self,
+        args: TrainingArguments,
+        state: TrainerState,
+        control: TrainerControl,
+        **kwargs,
+    ):
+        checkpoint_folder = os.path.join(
+            args.output_dir, f"{PREFIX_CHECKPOINT_DIR}-{state.global_step}"
+        )
+
+        peft_model_path = os.path.join(checkpoint_folder, "adapter_model")
+        kwargs["model"].save_pretrained(peft_model_path)
+
+        return control
 
 class UIETrainer(Seq2SeqTrainer):
 
@@ -69,7 +86,6 @@ class UIETrainer(Seq2SeqTrainer):
         args = self.args
 
         prediction_loss_only = prediction_loss_only if prediction_loss_only is not None else args.prediction_loss_only
-
         # if eval is called w/o train init deepspeed here
         if args.deepspeed and not self.deepspeed:
 
@@ -275,9 +291,9 @@ class UIETrainer(Seq2SeqTrainer):
             generation_inputs = inputs[self.model.encoder.main_input_name]
         else:
             generation_inputs = inputs[self.model.main_input_name]
-
+        
         generated_tokens = self.model.generate(
-            generation_inputs,
+            input_ids=generation_inputs,
             generation_config=generation_config
         )
 

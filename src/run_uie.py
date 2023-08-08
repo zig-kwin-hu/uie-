@@ -23,11 +23,12 @@ import os
 import sys
 import json
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, List
 
 import datasets
 import nltk  # Here to have a nice missing dependency error message early on
 import numpy as np
+import torch
 from datasets import load_dataset
 
 import transformers
@@ -39,9 +40,19 @@ from transformers import (
     AutoTokenizer,
     HfArgumentParser,
     Seq2SeqTrainingArguments,
-    set_seed, )
+    set_seed, 
+    DataCollatorForSeq2Seq)
 from transformers.file_utils import is_offline_mode
 from transformers.trainer_utils import get_last_checkpoint
+
+from peft import (
+    LoraConfig,
+    TaskType,
+    get_peft_model,
+    get_peft_model_state_dict,
+    prepare_model_for_int8_training,
+    set_peft_model_state_dict,
+)
 
 from model.bloom import BloomForCausalLM_WithLoss
 from model.codegen import CodeGenForCausalLM_WithLoss
@@ -50,7 +61,7 @@ from model.gpt_neox import GPTNeoXForCausalLM_WithLoss
 from uie_collator import DataCollatorForUIE
 from uie_dataset import gen_cache_path
 
-from uie_trainer import UIETrainer, DenserEvalCallback, skip_instructions
+from uie_trainer import UIETrainer, DenserEvalCallback, SavePeftModelCallback, skip_instructions
 from compute_metrics import compute_metrics, compute_grouped_metrics
 
 # off wandb
@@ -111,6 +122,30 @@ class ModelArguments:
                     "the model's position embeddings."
         },
     )
+    lora_r: Optional[int] = field(
+        default=16,
+        metadata={
+            "help": "apply LoRA Rank"
+        },
+    )
+    lora_alpha: Optional[int] = field(
+        default=16,
+        metadata={
+            "help": "apply LoRA Alpha"
+        },
+    )
+    lora_dropout: Optional[float] = field(
+        default=0.05,
+        metadata={
+            "help": "apply LoRA dropout"
+        },
+    )
+    lora_target_modules: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "apply LoRA PEFT training target"
+        },
+    )
 
 
 @dataclass
@@ -132,6 +167,9 @@ class DataTrainingArguments:
         default='single', metadata={
             "help": "How many different instructions to use? Support 'single' and 'multiple' mode."
         }
+    )
+    prompt_file: str = field(
+        default=None, metadata={"help": "The prompt file for different preprompt."}
     )
     overwrite_cache: bool = field(
         default=False, metadata={"help": "Overwrite the cached training and evaluation sets"}
@@ -203,6 +241,14 @@ class DataTrainingArguments:
         default=0,
         metadata={"help": "number of in-context positive examples."}
     )
+    min_negative_labels: Optional[int] = field(
+        default=-1,
+        metadata={"help": "number of negative label in prompt."}
+    )
+    min_positive_labels: Optional[int] = field(
+        default=-1,
+        metadata={"help": "number of positive label in prompt."}
+    )
     ignore_pad_token_for_loss: bool = field(
         default=True,
         metadata={
@@ -225,6 +271,7 @@ class DataTrainingArguments:
         default=False,
         metadata={"help": "Whether to over sampling the dataset to max_num_instances_per_task"}
     )
+    
 
 
 @dataclass
@@ -244,7 +291,6 @@ def main():
     # See all possible arguments in src/transformers/training_args.py
     # or by passing the --help flag to this script.
     # We now keep distinct sets of args, for a cleaner separation of concerns.
-
     parser = HfArgumentParser((ModelArguments, DataTrainingArguments, UIETrainingArguments))
     if len(sys.argv) == 2 and sys.argv[1].endswith(".json"):
         # If we pass only one argument to the script and it's the path to a json file,
@@ -291,7 +337,10 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
     data_cache_dir = gen_cache_path(training_args.output_dir, data_args)
-
+    use_lora = model_args.lora_target_modules != None
+    if model_args.lora_target_modules:
+        model_args.lora_target_modules = model_args.lora_target_modules.split(',')
+    
     # Get the UIE dataset
     raw_datasets = load_dataset(
         os.path.join(CURRENT_DIR, "uie_dataset.py"),
@@ -299,11 +348,14 @@ def main():
         task_config_dir=data_args.task_config_dir,
         instruction_file=data_args.instruction_file,
         instruction_strategy=data_args.instruction_strategy,
+        prompt_file=data_args.prompt_file,
         cache_dir=data_cache_dir,  # for debug, change dataset size, otherwise open it
         max_num_instances_per_task=data_args.max_num_instances_per_task,
         max_num_instances_per_eval_task=data_args.max_num_instances_per_eval_task,
         num_examples=data_args.num_examples,
-        over_sampling=data_args.over_sampling
+        over_sampling=data_args.over_sampling,
+        min_negative_labels=data_args.min_negative_labels,
+        min_positive_labels=data_args.min_positive_labels
     )
     raw_datasets.cleanup_cache_files()
 
@@ -325,24 +377,36 @@ def main():
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
     )
-
+    
+    device_map = None
     if 'bloom' in model_args.model_name_or_path.lower():
         model_class = BloomForCausalLM_WithLoss
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = 'left'
+        task_type = TaskType.CAUSAL_LM
     elif 'codegen' in model_args.model_name_or_path.lower():
         model_class = CodeGenForCausalLM_WithLoss
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = 'left'
-
+        task_type = TaskType.CAUSAL_LM
     elif 'neox' in model_args.model_name_or_path.lower():  # add neox
         model_class = GPTNeoXForCausalLM_WithLoss
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
         tokenizer.padding_side = 'left'
+        task_type = TaskType.CAUSAL_LM
+    elif 'llama' in model_args.model_name_or_path.lower():
+        model_class = AutoModelForCausalLM
+        tokenizer.pad_token = tokenizer.unk_token
+        tokenizer.padding_side = 'left'
+        task_type = TaskType.CAUSAL_LM
+        device_map = "auto"
     else:
         model_class = AutoModelForSeq2SeqLM
+        task_type = TaskType.SEQ_2_SEQ_LM
+        if not training_args.deepspeed:
+            device_map = "auto"
     model = model_class.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -350,6 +414,9 @@ def main():
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
+        load_in_8bit=use_lora,
+        torch_dtype=torch.float16 if use_lora else None,
+        device_map=device_map
     )
     model.resize_token_embeddings(len(tokenizer))
 
@@ -377,6 +444,41 @@ def main():
             "label_smoothing is enabled but the `prepare_decoder_input_ids_from_labels` method is not defined for"
             f"`{model.__class__.__name__}`. This will lead to loss being calculated twice and will take up more memory"
         )
+        
+    if use_lora:
+        model = prepare_model_for_int8_training(model)
+
+        config = LoraConfig(
+            r=model_args.lora_r,
+            lora_alpha=model_args.lora_alpha,
+            target_modules=model_args.lora_target_modules,
+            lora_dropout=model_args.lora_dropout,
+            bias="none",
+            task_type=task_type,
+        )
+        model = get_peft_model(model, config)
+        logger.info("Applying LORA peft model")
+        
+        if training_args.resume_from_checkpoint:
+            checkpoint_name = os.path.join(
+                training_args.resume_from_checkpoint, "pytorch_model.bin"
+            )  # Full checkpoint
+            if not os.path.exists(checkpoint_name):
+                checkpoint_name = os.path.join(
+                    training_args.resume_from_checkpoint, "adapter_model.bin"
+                )  # only LoRA model - LoRA config above has to fit
+                training_args.resume_from_checkpoint = None
+                if os.path.exists(checkpoint_name):
+                    print(f"Restarting from LoRA Adapter {checkpoint_name}")
+                    adapters_weights = torch.load(checkpoint_name)
+                    set_peft_model_state_dict(model, adapters_weights)
+                else:
+                    print(f"LoRA Checkpoint {checkpoint_name} not found")
+        
+        model.is_parallelizable = True
+        model.model_parallel = True
+        model.print_trainable_parameters()
+            
 
     if training_args.do_train:
         if "train" not in raw_datasets:
@@ -413,15 +515,16 @@ def main():
         add_dataset_name=data_args.add_dataset_name,
         common_dataset_name=data_args.common_dataset_name,
         num_examples=data_args.num_examples,
-        input_record_file=data_args.input_record_file
+        input_record_file=data_args.input_record_file,
+        return_loss_mask=not 'llama' in model_args.model_name_or_path.lower()
     )
     # we don't want to remove unused columns because we will prepare each batch during training,
     # and some of the information will also be used in evaluation.
     training_args.remove_unused_columns = False
 
     # Metric
-    def compute_rouge_metrics(dataset, preds, save_prefix=None):
-        decoded_preds = skip_instructions(model, preds, tokenizer)
+    def compute_rouge_metrics(dataset, preds, save_prefix='dev'):
+        decoded_preds = skip_instructions(model, preds, tokenizer, dataset)
         references = [e["Instance"]["label"] for e in dataset]
         result = compute_metrics(predictions=decoded_preds, references=references)
         result_per_task = compute_grouped_metrics(predictions=decoded_preds, references=references,
@@ -449,6 +552,12 @@ def main():
     if training_args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
 
+    callbacks = []
+    if use_lora:
+        callbacks.append(SavePeftModelCallback)
+    if training_args.denser_evaluation:
+        callbacks.append(DenserEvalCallback)
+    
     trainer = UIETrainer(
         model=model,
         args=training_args,
@@ -457,9 +566,20 @@ def main():
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_rouge_metrics,
-        callbacks=[DenserEvalCallback] if training_args.denser_evaluation else None
+        callbacks=callbacks
     )
-
+    
+    if use_lora:
+        old_state_dict = model.state_dict
+        model.state_dict = (
+            lambda self, *_, **__: get_peft_model_state_dict(
+                self, old_state_dict()
+            )
+        ).__get__(model, type(model))
+    
+    if torch.__version__ >= "2" and sys.platform != "win32":
+        model = torch.compile(model)
+        
     all_metrics = {"run_name": training_args.run_name}
 
     # Training
@@ -471,6 +591,7 @@ def main():
             checkpoint = training_args.resume_from_checkpoint
         elif last_checkpoint is not None:
             checkpoint = last_checkpoint
+        
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
@@ -507,18 +628,25 @@ def main():
         if training_args.resume_from_checkpoint is not None:
             checkpoint = training_args.resume_from_checkpoint
         # without last ckpt and resume ckpt, would predict with current model
-        if checkpoint:
-            model = model_class.from_pretrained(checkpoint)
-            trainer = UIETrainer(
-                model=model,
-                args=training_args,
-                train_dataset=train_dataset if training_args.do_train else None,
-                eval_dataset=eval_dataset if training_args.do_eval else None,
-                tokenizer=tokenizer,
-                data_collator=data_collator,
-                compute_metrics=compute_rouge_metrics,
-                callbacks=[DenserEvalCallback] if training_args.denser_evaluation else None
-            )
+        # if checkpoint:
+        #     model = model_class.from_pretrained(checkpoint)
+        #     trainer = UIETrainer(
+        #         model=model,
+        #         args=training_args,
+        #         train_dataset=train_dataset if training_args.do_train else None,
+        #         eval_dataset=eval_dataset if training_args.do_eval else None,
+        #         tokenizer=tokenizer,
+        #         data_collator=data_collator,
+        #         compute_metrics=compute_rouge_metrics,
+        #         callbacks=callbacks
+        #     )
+        #     if use_lora:
+        #         old_state_dict = model.state_dict
+        #         model.state_dict = (
+        #             lambda self, *_, **__: get_peft_model_state_dict(
+        #                 self, old_state_dict()
+        #             )
+        #         ).__get__(model, type(model))
 
         if data_args.max_predict_samples is not None:
             predict_dataset = predict_dataset.select(range(data_args.max_predict_samples))
@@ -536,7 +664,6 @@ def main():
             data_args.max_predict_samples if data_args.max_predict_samples is not None else len(predict_dataset)
         )
         metrics["predict_samples"] = min(max_predict_samples, len(predict_dataset))
-
         trainer.log(metrics)
         trainer.log_metrics("predict", metrics)
         trainer.save_metrics("predict", metrics)

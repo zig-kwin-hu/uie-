@@ -1,0 +1,6 @@
+{
+    "description": "Template used by Llama2 Chat.",
+    "prompt_option": "[INST] <<SYS>>\nYou are an information extraction expert that can extract the entities, identifying its relations and determine the events based on the given instruction, type options and input text. \n<</SYS>>\n\n{instruction} Option: {options} \nText: {text} [/INST] \nAnswer:",
+    "prompt_no_option": "[INST] <<SYS>>\nYou are an information extraction expert that can extract the entities, identifying its relations and determine the events based on the given instruction, type options and input text. \n<</SYS>>\n\n{instruction} \nText: {text} [/INST] \nAnswer:",
+    "response_split": "Answer:"    
+}

@@ -1,0 +1,6 @@
+{
+    "description": "Template used by InstructUIE.",
+    "prompt_option": "{text} \nAnswer:",
+    "prompt_no_option": "{text} \nAnswer:",
+    "response_split": "Answer:"
+}

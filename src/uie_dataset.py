@@ -16,11 +16,14 @@
 # Lint as: python3
 """InstructUIE Dataset."""
 
+from copy import deepcopy
 import json
 import os
 import random
+from typing import List
 import datasets
 from hashlib import md5
+import torch
 
 logger = datasets.logging.get_logger(__name__)
 TASK_CONFIG_FILES = {"train": "train_tasks.json", "dev": "dev_tasks.json", "test": "test_tasks.json"}
@@ -71,10 +74,13 @@ class UIEConfig(datasets.BuilderConfig):
             instruction_file=None,
             instruction_strategy=None,
             task_config_dir=None,
+            prompt_file=None,
             num_examples=None,
             max_num_instances_per_task=None,
             max_num_instances_per_eval_task=None,
             over_sampling=None,
+            min_negative_labels=-1,
+            min_positive_labels=-1,
             **kwargs
     ):
         super().__init__(*args, **kwargs)
@@ -82,10 +88,13 @@ class UIEConfig(datasets.BuilderConfig):
         self.num_examples = num_examples
         self.over_sampling = over_sampling
         self.instructions = self._parse_instruction(instruction_file)
+        self.prompt = self._load_prompt(prompt_file)
         self.task_configs = self._parse_task_config(task_config_dir)
         self.instruction_strategy = instruction_strategy
         self.max_num_instances_per_task = max_num_instances_per_task
         self.max_num_instances_per_eval_task = max_num_instances_per_eval_task
+        self.min_negative_labels = min_negative_labels
+        self.min_positive_labels = min_positive_labels
 
     def _parse_instruction(self, instruction_file):
         """
@@ -158,6 +167,13 @@ class UIEConfig(datasets.BuilderConfig):
 
         return task_configs
 
+    def _load_prompt(self, prompt_file):
+        if not prompt_file:
+            return None
+        
+        with open(prompt_file, 'r+') as f:
+            prompt = json.loads(f.read())
+            return prompt
 
 # TODO, few-shot, 需要 load 的时候就将值存好，放在 "Examples" 里面
 class UIEInstructions(datasets.GeneratorBasedBuilder):
@@ -188,7 +204,8 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                         "sentence": datasets.Value("string"),
                         "label": datasets.Value("string"),
                         "instruction": datasets.Value("string"),
-                        "ground_truth": datasets.Value("string")
+                        "ground_truth": datasets.Value("string"),
+                        "answer_prefix": datasets.Value("string")
                     }
                 }
             ),
@@ -232,12 +249,14 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 }),
         ]
 
-    def _load_dataset(self, dataset_path, labels_path):
+    def _load_dataset(self, dataset_path, labels_path = None):
         with open(dataset_path, encoding="utf-8") as task_f:
             s = task_f.read()
             instances = json.loads(s)
-        with open(labels_path, encoding="utf-8") as labels_f:
-            labels = json.load(labels_f)
+        labels = None
+        if labels_path:
+            with open(labels_path, encoding="utf-8") as labels_f:
+                labels = json.load(labels_f)
 
         return instances, labels
 
@@ -252,6 +271,13 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         else:
             return random.choice(task_instructions)
 
+    def _get_prompt(self, instruction, labels_str=None):
+        if labels_str:
+            prompt = self.config.prompt['prompt_option'].format(instruction=instruction, options=labels_str, text='{0}')
+        else:
+            prompt = self.config.prompt['prompt_no_option'].format(instruction=instruction, text='{0}')
+        return prompt
+        
     def _sampling_dataset(self, instances, sampling_strategy, max_num_instances):
         if sampling_strategy == 'random' and max_num_instances is not None and max_num_instances >= 0:
             instances = instances[:max_num_instances]
@@ -261,41 +287,281 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 instances.append(random.choice(origin_instances))
 
         return instances
+    
+    def sample_negative(self, positive: List[str], candidates: List[str], min_k=5):
+        if min_k < 0 or min_k > len(candidates):
+            k = len(candidates)
+        else:
+            k = random.randint(min_k, len(candidates))
+    
+        negative_set = []
+        randperm = torch.randperm(len(candidates))[:k].tolist()
+        
+        for index in randperm:
+            negative = candidates[index]
+            if negative not in positive + negative_set:
+                negative_set.append(negative)
+        
+        return negative_set
 
-    def load_NER_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
-        instances, labels = self._load_dataset(dataset_path, labels_path)
+    def sample_positive(self, positive: List[str], min_k=1):
+        if len(positive) == 0:
+            return list()
+        
+        if len(positive) == min_k:
+            return positive
+        
+        if min_k < 0 or min_k > len(positive):
+            k = len(positive)
+        else:
+            k = random.randint(min_k, len(positive))
 
+        chosen_positive = []
+        randperm = torch.randperm(len(positive))[:k].tolist()
+        for index in randperm:
+            pos = positive[index]
+            if pos not in chosen_positive:
+                chosen_positive.append(pos)
+        
+        return chosen_positive
+    
+    def _sampling_labels(self, label_list, positive: List[str]):
+        negative_set = self.sample_negative(
+            positive,
+            label_list,
+            self.config.min_negative_labels,
+        )
+        # Unchosen positive labels will be removed in doc.event_list
+        positive_set = self.sample_positive(positive, self.config.min_positive_labels)
+        
+        labels = negative_set + positive_set
+        if False:
+            labels.sort()
+        else:
+            random.shuffle(labels)
+            
+        return labels, negative_set, positive_set
+        
+    
+    def load_NER_LLM_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
+        def _norm_fewnerd(docs):
+            norm_docs = []
+            if type(docs) is not dict:
+                return docs
+
+            for label, samples in docs.items():
+                norm_docs.extend(samples)
+            return norm_docs
+        
+        docs, labels = self._load_dataset(dataset_path, labels_path)
+        instances = _norm_fewnerd(docs)
+        
         sample_template = {"Task": "NER", "Dataset": dataset_name, "Samples": [], "subset": subset}
 
-        labels_str = ', '.join(labels)
         instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
-
+        
         for idx, instance in enumerate(instances):
             example = sample_template.copy()
             instruction = self._get_instruction('NER')
-            instruction += "Option: " + labels_str + " \n" + "Text: " + "{0}" + " \n" + "Answer:"
-            kv_pairs = []
-
-            for entity in instance['entities']:
-                if entity['type'] == 'NA' or entity['type'] == '':
-                    continue
-                kv_pair = [entity['name'], entity['type']]
-                kv_pairs.append(kv_pair)
-
-            if len(kv_pairs) > 0:
-                label = " " + "; ".join(["{}: {}".format(v, k) for (k, v) in kv_pairs])
+            
+            positive_types = list(set(labels[ev['type']] for ev in instance['event_list']))
+            label_set = []
+            
+            if subset == "train" and positive_types:
+                dum_pos_types = deepcopy(positive_types)
+                while dum_pos_types:
+                    filtered_label_list = [lbl for lbl in list(labels.values()) if lbl not in positive_types]
+                    label_list, negative_set, positive_set = self._sampling_labels(filtered_label_list, dum_pos_types)
+                    labels_str = ", ".join(label_list)
+                    label_set.append((labels_str, positive_set))
+                    
+                    dum_pos_types = [p for p in dum_pos_types if p not in positive_set]
             else:
-                label = " None"
+                labels_str = ", ".join(labels.values())
+                label_set.append((labels_str, positive_types))
+            
+            for labels_str, positive_set in label_set:
+                instruction = self._get_prompt(instruction, labels_str)
+                entities = [ent for ent in instance['event_list'] if ent['type'] in positive_set]
+                
+                kv_pairs = []
+
+                for entity in entities:
+                    if entity['type'] == 'NA' or entity['type'] == '':
+                        continue
+                    kv_pair = [entity['trigger']['text'], labels[entity['type']]]
+                    kv_pairs.append(kv_pair)
+
+                if len(kv_pairs) > 0:
+                    label = " " + "; ".join(["{}: {}".format(v, k) for (k, v) in kv_pairs])
+                else:
+                    label = " None"
+
+                example["Instance"] = {
+                    "id": str(idx),
+                    "sentence": instance['sent'],
+                    "label": label,
+                    "ground_truth": label,
+                    "instruction": instruction,
+                    "answer_prefix": self.config.prompt["response_split"]
+                }
+                
+                yield example
+
+    def load_NER_TF_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
+        instances, labels = self._load_dataset(dataset_path, labels_path)
+
+        sample_template = {"Task": "NER_TF", "Dataset": dataset_name, "Samples": [], "subset": subset}
+        
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        
+        for idx, instance in enumerate(instances):
+            example = sample_template.copy()
+            instruction = self._get_instruction('NER_TF')
+            instruction = self._get_prompt(instruction)
+
+            if len(instance['entities']) > 0:
+                label = " True"
+            else:
+                label = " False"
 
             example["Instance"] = {
                 "id": str(idx),
                 "sentence": instance['sentence'],
                 "label": label,
                 "ground_truth": label,
-                "instruction": instruction
+                "instruction": instruction,
+                "answer_prefix": self.config.prompt["response_split"]
             }
-
             yield example
+    
+    def load_NER_ENT_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
+        instances, labels = self._load_dataset(dataset_path, labels_path)
+
+        sample_template = {"Task": "NER", "Dataset": dataset_name, "Samples": [], "subset": subset}
+
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+
+        for idx, instance in enumerate(instances):
+            example = sample_template.copy()
+            instruction = self._get_instruction('NER')
+            
+            if not instance['entities']:
+                continue
+            
+            positive_types = list(set(ev['type'] for ev in instance['entities']))
+            
+            selected_set = []
+            
+            dum_pos_types = deepcopy(positive_types)
+            while dum_pos_types:
+                filtered_label_list = [lbl for lbl in list(labels) if lbl not in positive_types]
+                label_list, negative_set, positive_set = self._sampling_labels(filtered_label_list, dum_pos_types)
+                labels_str = ", ".join(label_list)
+                selected_set.append(positive_set)
+                
+                dum_pos_types = [p for p in dum_pos_types if p not in positive_set]
+            
+            for positive_set in selected_set:
+                entities = [ent for ent in instance['entities'] if ent['type'] in positive_set]
+                kv_pairs = []
+
+                for entity in entities:
+                    if entity['type'] == 'NA' or entity['type'] == '':
+                        continue
+                    kv_pair = [entity['name'], entity['type']]
+                    kv_pairs.append(kv_pair)
+                
+                if kv_pairs > 1:
+                    target = "entities are "
+                else:
+                    target = "entity is "
+                instruction += "Given " + target + ", ".join([k for (k, v) in kv_pairs])
+                
+                label = " " + "; ".join(["{}: {}".format(v, k) for (k, v) in kv_pairs])
+                    
+                instruction = self._get_prompt(instruction)
+
+                example["Instance"] = {
+                    "id": str(idx),
+                    "sentence": instance['sentence'],
+                    "label": label,
+                    "ground_truth": label,
+                    "instruction": instruction,
+                    "answer_prefix": self.config.prompt["response_split"]
+                }
+                
+                yield example
+    
+    def load_NER_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
+        instances, labels = self._load_dataset(dataset_path, labels_path)
+
+        sample_template = {"Task": "NER", "Dataset": dataset_name, "Samples": [], "subset": subset}
+
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+
+        for idx, instance in enumerate(instances):
+            example = sample_template.copy()
+            instruction = self._get_instruction('NER')
+            
+            positive_types = list(set(ev['type'] for ev in instance['entities']))
+            label_set = []
+            
+            add_other = True
+            if add_other:
+                labels.append('other')
+                
+            if positive_types and (add_other or subset == "train") :
+                dum_pos_types = deepcopy(positive_types)
+                while dum_pos_types:
+                    filtered_label_list = [lbl for lbl in list(labels) if lbl not in positive_types]
+                    label_list, negative_set, positive_set = self._sampling_labels(filtered_label_list, dum_pos_types)
+                    labels_str = ", ".join(label_list)
+                    label_set.append((labels_str, positive_set))
+                    
+                    dum_pos_types = [p for p in dum_pos_types if p not in positive_set]
+            else:
+                labels_str = ", ".join(labels)
+                label_set.append((labels_str, positive_types))
+            
+            
+            for labels_str, positive_set in label_set:
+                instruction = self._get_prompt(instruction, labels_str)
+                
+                entities = [ent for ent in instance['entities'] if ent['type'] in positive_set]
+                
+                if 'other' in labels:
+                    other_entities = [ent for ent in instance['entities'] if ent['type'] in positive_types and ent['type'] not in positive_set]
+                
+                kv_pairs = []
+
+                for entity in entities:
+                    if entity['type'] == 'NA' or entity['type'] == '':
+                        continue
+                    kv_pair = [entity['name'], entity['type']]
+                    kv_pairs.append(kv_pair)
+                
+                for entity in other_entities:
+                    if entity['type'] == 'NA' or entity['type'] == '':
+                        continue
+                    kv_pair = [entity['name'], 'other']
+                    kv_pairs.append(kv_pair)
+
+                if len(kv_pairs) > 0:
+                    label = " " + "; ".join(["{}: {}".format(v, k) for (k, v) in kv_pairs])
+                else:
+                    label = " None"
+
+                example["Instance"] = {
+                    "id": str(idx),
+                    "sentence": instance['sentence'],
+                    "label": label,
+                    "ground_truth": label,
+                    "instruction": instruction,
+                    "answer_prefix": self.config.prompt["response_split"]
+                }
+                
+                yield example
 
     def load_ES_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
         # ES = Entity Span
@@ -309,7 +575,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         for idx, instance in enumerate(instances):
             example = sample_template.copy()
             instruction = self._get_instruction('ES')
-            instruction += "Option: " + labels_str + " \n" + "Text: " + "{0}" + " \n" + "Answer:"
+            instruction = self._get_prompt(instruction, labels_str)
             entities = []
 
             for entity in instance['entities']:
@@ -325,7 +591,8 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 "sentence": instance['sentence'],
                 "label": label,
                 "ground_truth": label,
-                "instruction": instruction
+                "instruction": instruction,
+                "answer_prefix": self.config.prompt["response_split"]
             }
 
             if random.random() < AUX_PROB:
@@ -366,7 +633,8 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 "sentence": instance['sentence'],
                 "label": label,
                 "ground_truth": label,
-                "instruction": instruction
+                "instruction": instruction,
+                "answer_prefix": self.config.prompt["response_split"]
             }
 
             if random.random() < AUX_PROB:
@@ -383,7 +651,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         for idx, instance in enumerate(instances):
             example = sample_template.copy()
             instruction = self._get_instruction('EP')
-            instruction += "Option: " + labels_str + " \n" + "Text: " + "{0}" + " \n" + "Answer:"
+            instruction = self._get_prompt(instruction, labels_str)
             relation_pairs = []
             ground_truth_pairs = []
 
@@ -409,7 +677,8 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 "sentence": instance['sentence'],
                 "label": label,
                 "ground_truth": ground_truth,
-                "instruction": instruction
+                "instruction": instruction,
+                "answer_prefix": self.config.prompt["response_split"]
             }
 
             if random.random() < AUX_PROB:
@@ -459,7 +728,8 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 "sentence": instance['sentence'],
                 "label": label,
                 "ground_truth": ground_truth,
-                "instruction": instruction
+                "instruction": instruction,
+                "answer_prefix": self.config.prompt["response_split"]
             }
 
             if random.random() < AUX_PROB:
@@ -475,7 +745,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         for idx, instance in enumerate(instances):
             example = sample_template.copy()
             instruction = self._get_instruction('RE')
-            instruction += "Option: " + labels_str + " \n" + "Text: " + "{0}" + " \n" + "Answer:"
+            instruction = self._get_prompt(instruction, labels_str)
             relation_pairs = []
             ground_truth_pairs = []
 
@@ -503,7 +773,8 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 "sentence": instance['sentence'],
                 "label": label,
                 "ground_truth": ground_truth,
-                "instruction": instruction
+                "instruction": instruction,
+                "answer_prefix": self.config.prompt["response_split"]
             }
 
             yield example
@@ -520,7 +791,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         for idx, instance in enumerate(instances):
             example = sample_template.copy()
             instruction = self._get_instruction('EE')
-            instruction += " Option: " + labels_str + " \n" + "Text: " + "{0}" + " \n" + "Answer:"
+            instruction = self._get_prompt(instruction)
             event_pairs = []
 
             for k, event in enumerate(instance['events']):
@@ -543,13 +814,14 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                                    for (type, trigger, arguments) in event_pairs])
             else:
                 label = ' None'
-
+            
             example["Instance"] = {
                 "id": str(idx),
                 "sentence": instance['sentence'],
                 "label": label,
                 "ground_truth": label,
-                "instruction": instruction
+                "instruction": instruction,
+                "answer_prefix": self.config.prompt["response_split"]
             }
 
             yield example
@@ -560,13 +832,20 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
 
         # TODO, reconstruct Event Instruction to two stage
         # TODO, check
-        labels_str = ", ".join(labels.keys())
         instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
 
         for idx, instance in enumerate(instances):
             example = sample_template.copy()
             instruction = self._get_instruction('EET')
-            instruction += " Option: " + labels_str + " \n" + "Text: " + "{0}" + " \n" + "Answer:"
+            positive_types = [ev['type'] for ev in instance['events']]
+            if subset == "train" and positive_types:
+                label_list, negative_set, positive_set = self._sampling_labels(list(labels.keys()), positive_types)
+                labels_str = ", ".join(label_list)
+            else:
+                labels_str = ", ".join(labels.keys())
+            
+            instruction = self._get_prompt(instruction, labels_str)
+            # instruction += "Option: " + labels_str + " \n" + "Text: " + "{0}" + " \n" + "Answer:"
             event_pairs = []
 
             for k, event in enumerate(instance['events']):
@@ -590,12 +869,44 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 "sentence": instance['sentence'],
                 "label": label,
                 "ground_truth": label,
-                "instruction": instruction
+                "instruction": instruction,
+                "answer_prefix": self.config.prompt["response_split"]
             }
 
             yield example
+    
+    def load_EET_TF_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
+        instances, labels = self._load_dataset(dataset_path, labels_path)
 
+        sample_template = {"Task": "EET_TF", "Dataset": dataset_name, "Samples": [], "subset": subset}
+        
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        
+        # labels_str = ", ".join(labels)
+        for idx, instance in enumerate(instances):
+            example = sample_template.copy()
+            instruction = self._get_instruction('EET_TF')
+            
+            instruction = self._get_prompt(instruction)
+
+            if len(instance['events']) > 0:
+                label = " True"
+            else:
+                label = ' False'
+
+            example["Instance"] = {
+                "id": str(idx),
+                "sentence": instance['sentence'],
+                "label": label,
+                "ground_truth": label,
+                "instruction": instruction,
+                "answer_prefix": self.config.prompt["response_split"]
+            }
+            
+            yield example
+    
     def load_EEA_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
+
         instances, labels = self._load_dataset(dataset_path, labels_path)
         sample_template = {"Task": "EEA", "Dataset": dataset_name, "Samples": [], "subset": subset}
 
@@ -622,10 +933,120 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 "sentence": instance['sentence'],
                 "label": label,
                 "ground_truth": label,
-                "instruction": instruction
+                "instruction": instruction,
+                "answer_prefix": self.config.prompt["response_split"]
             }
             yield example
+    
+    def load_ETRIG_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
+        instances, labels = self._load_dataset(dataset_path, labels_path)
+        sample_template = {"Task": "ETRIG", "Dataset": dataset_name, "Samples": [], "subset": subset}
+        
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        
+        for idx, instance in enumerate(instances):
+            example = sample_template.copy()
+            event = instance['events'][0]
             
+            instruction = self._get_instruction('ETRIG').format(type=event['type'])
+            instruction = self._get_prompt(instruction)
+
+            label = " " + event['trigger']
+
+            example["Instance"] = {
+                "id": str(idx),
+                "sentence": instance['sentence'],
+                "label": label,
+                "ground_truth": label,
+                "instruction": instruction,
+                "answer_prefix": self.config.prompt["response_split"]
+            }
+            yield example
+    
+    def load_EXAMPLE_EET_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
+        
+        instances, labels = self._load_dataset(dataset_path, labels_path)
+        sample_template = {"Task": "EXAMPLE", "Dataset": dataset_name, "Samples": [], "subset": subset}
+        
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        
+        for idx, instance in enumerate(instances):
+            example = sample_template.copy()
+            event = instance['events'][0]
+            
+            instruction = self._get_instruction('EXAMPLE_EET')
+
+            label = "Example sentece: "+ instance['sentence'] + "; Event type: " + event["type"] + "; Trigger word: " + event["trigger"]
+
+            example["Instance"] = {
+                "id": str(idx),
+                "sentence": instance['sentence'],
+                "label": label,
+                "ground_truth": label,
+                "instruction": instruction,
+                "answer_prefix": None
+            }
+            yield example
+
+    def load_EXAMPLE_NER_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
+        
+        instances, labels = self._load_dataset(dataset_path, labels_path)
+        sample_template = {"Task": "EXAMPLE", "Dataset": dataset_name, "Samples": [], "subset": subset}
+        
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        
+        for idx, instance in enumerate(instances):
+            example = sample_template.copy()
+            entities = instance['entities']
+            
+            if not entities:
+                continue
+            
+            instruction = self._get_instruction('EXAMPLE_NER')
+
+            kv_pairs = []
+
+            for entity in entities:
+                if entity['type'] == 'NA' or entity['type'] == '':
+                    continue
+                kv_pair = [entity['name'], entity['type']]
+                kv_pairs.append(kv_pair)
+            
+            label = "Example sentece: "+ instance['sentence'] + "; Entities: " + "; ".join(["{}: {}".format(v, k) for (k, v) in kv_pairs])
+
+            example["Instance"] = {
+                "id": str(idx),
+                "sentence": instance['sentence'],
+                "label": label,
+                "ground_truth": label,
+                "instruction": instruction,
+                "answer_prefix": None
+            }
+            yield example
+    
+    def load_EXPLAIN_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
+        instances, labels = self._load_dataset(dataset_path, labels_path)
+        sample_template = {"Task": "EXPLAIN", "Dataset": dataset_name, "Samples": [], "subset": subset}
+        
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        
+        for idx, instance in enumerate(instances):
+            example = sample_template.copy()
+            
+            instruction = instance['sentence']
+
+            label = instance['output']
+
+            example["Instance"] = {
+                "id": str(idx),
+                "sentence": instance['sentence'],
+                "label": label,
+                "ground_truth": label,
+                "instruction": instruction,
+                "answer_prefix": None
+            }
+            yield example
+    
     def _generate_examples(self, path=None, task_config=None, max_num_instances_per_task=None, subset=None):
         """Yields examples."""
         logger.info(f"Generating tasks from = {path}")
@@ -633,6 +1054,12 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         for task in task_config:
             if task == "NER":
                 load_func = self.load_NER_dataset
+            elif task == "NER_LLM":
+                load_func = self.load_NER_LLM_dataset
+            elif task == "NER_TF":
+                load_func = self.load_NER_TF_dataset
+            elif task == "NER_ENT":
+                load_func = self.load_NER_ENT_dataset
             elif task == 'RE':
                 load_func = self.load_RE_dataset
             elif task == 'EE':
@@ -647,8 +1074,18 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 load_func = self.load_EPR_dataset
             elif task == 'EET':
                 load_func = self.load_EET_dataset
+            elif task == 'EET_TF':
+                load_func = self.load_EET_TF_dataset
             elif task == 'EEA':
                 load_func = self.load_EEA_dataset
+            elif task == 'ETRIG':
+                load_func = self.load_ETRIG_dataset
+            elif task == 'EXAMPLE_EET':
+                load_func = self.load_EXAMPLE_EET_dataset
+            elif task == 'EXAMPLE_NER':
+                load_func = self.load_EXAMPLE_NER_dataset
+            elif task == 'EXPLAIN':
+                load_func = self.load_EXPLAIN_dataset
             else:
                 raise ValueError("Unsupport {} task, plz check {} task config!".format(task, subset))
 
