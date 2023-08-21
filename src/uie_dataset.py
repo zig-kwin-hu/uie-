@@ -81,6 +81,7 @@ class UIEConfig(datasets.BuilderConfig):
             over_sampling=None,
             min_negative_labels=-1,
             min_positive_labels=-1,
+            ordered_prompt=True,
             **kwargs
     ):
         super().__init__(*args, **kwargs)
@@ -95,6 +96,7 @@ class UIEConfig(datasets.BuilderConfig):
         self.max_num_instances_per_eval_task = max_num_instances_per_eval_task
         self.min_negative_labels = min_negative_labels
         self.min_positive_labels = min_positive_labels
+        self.ordered_prompt = ordered_prompt
 
     def _parse_instruction(self, instruction_file):
         """
@@ -279,13 +281,16 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         return prompt
         
     def _sampling_dataset(self, instances, sampling_strategy, max_num_instances):
+        print("Sampling strategy: {}".format(sampling_strategy))
+        print('Total instances: {}'.format(len(instances)))
         if sampling_strategy == 'random' and max_num_instances is not None and max_num_instances >= 0:
             instances = instances[:max_num_instances]
-        if max_num_instances!=None and self.config.over_sampling and len(instances) < max_num_instances:
+        if (max_num_instances!=None) and self.config.over_sampling and (len(instances) < max_num_instances):
             origin_instances = instances.copy()
             while len(instances) < max_num_instances:
                 instances.append(random.choice(origin_instances))
-
+        print('max_num_instances: {}'.format(max_num_instances))
+        print('Sampled instances: {}'.format(len(instances)))
         return instances
     
     def sample_negative(self, positive: List[str], candidates: List[str], min_k=5):
@@ -335,7 +340,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         positive_set = self.sample_positive(positive, self.config.min_positive_labels)
         
         labels = negative_set + positive_set
-        if False:
+        if self.config.ordered_prompt:
             labels.sort()
         else:
             random.shuffle(labels)
@@ -1097,7 +1102,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 labels_path = os.path.join(path, task, ds_name, 'labels.json')
                 assert os.path.exists(ds_path)
                 assert os.path.exists(labels_path)
-
+                
                 idx = -1
                 instances = []
                 for sample in load_func(ds_path, labels_path, ds_name, sampling_strategy, max_num_instances_per_task,

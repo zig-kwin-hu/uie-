@@ -215,24 +215,24 @@ class DataCollatorForUIE:
             return
 
         loss_label = []
-        if hasattr(model_inputs, 'loss_mask'):
-            for loss, id in zip(model_inputs.loss_mask, model_inputs.input_ids):
-                loss_label.append(self.tokenizer.decode((loss * id).view(-1).int()))
+        # if hasattr(model_inputs, 'loss_mask'):
+        #     for loss, id in zip(model_inputs.loss_mask, model_inputs.input_ids):
+        #         loss_label.append(self.tokenizer.decode((loss * id).view(-1).int()))
 
-            with open(self.input_record_file, 'a+', encoding='utf-8') as f:
-                for text, label, mask_label in zip(sources, labels, loss_label):
-                    f.write(text+'\n')
-                    f.write(label + '\n')
-                    f.write(mask_label+'\n\n')
-        else:
-            with open(self.input_record_file, 'a+', encoding='utf-8') as f:
-                need_decode = False
-                if hasattr(labels, 'input_ids'):
-                    labels = labels['input_ids']
-                    need_decode = True
+        #     with open(self.input_record_file, 'w', encoding='utf-8') as f:
+        #         for text, label, mask_label in zip(sources, labels, loss_label):
+        #             f.write(text+'\n')
+        #             f.write(label + '\n')
+        #             f.write(mask_label+'\n\n')
+        # else:
+        #     with open(self.input_record_file, 'w', encoding='utf-8') as f:
+        #         need_decode = False
+        #         if hasattr(labels, 'input_ids'):
+        #             labels = labels['input_ids']
+        #             need_decode = True
                 
-                for text, label in zip(sources, labels):
-                    f.write(text + '\n')
-                    if need_decode:
-                        label = self.tokenizer.decode(label, clean_up_tokenization_spaces=False)
-                    f.write(label + '\n')
+        #         for text, label in zip(sources, labels):
+        #             f.write(text + '\n')
+        #             if need_decode:
+        #                 label = self.tokenizer.decode(label, clean_up_tokenization_spaces=False)
+        #             f.write(label + '\n')

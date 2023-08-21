@@ -62,7 +62,7 @@ from uie_collator import DataCollatorForUIE
 from uie_dataset import gen_cache_path
 
 from uie_trainer import UIETrainer, DenserEvalCallback, SavePeftModelCallback, skip_instructions
-from compute_metrics import compute_metrics, compute_grouped_metrics
+from compute_metrics import compute_f1, compute_metrics, compute_grouped_metrics
 
 # off wandb
 os.environ['WANDB_DISABLED'] = "True"
@@ -267,9 +267,13 @@ class DataTrainingArguments:
         default=None,
         metadata={"help": "common dataset name for zero shot."}
     )
-    over_sampling: Optional[str] = field(
+    over_sampling: Optional[bool] = field(
         default=False,
         metadata={"help": "Whether to over sampling the dataset to max_num_instances_per_task"}
+    )#there was a bug here, the type should be bool, but it was str
+    ordered_prompt: Optional[bool] = field(
+        default=True,
+        metadata={"help": "Whether to sort prompt options in instruction."}
     )
     
 
@@ -548,6 +552,32 @@ def main():
                     }) + "\n")
         return result
 
+    def compute_f1_metrics(dataset, preds, save_prefix='dev'):
+        decoded_preds = skip_instructions(model, preds, tokenizer, dataset)
+        references = [e["Instance"]["label"] for e in dataset]
+        result = compute_metrics(predictions=decoded_preds, references=references)
+        
+        result_per_task = compute_f1(dataset, decoded_preds)
+        result.update(result_per_task)
+        categories = dataset["Dataset"]
+        result_per_category = compute_grouped_metrics(predictions=decoded_preds, references=references,
+                                                      groups=categories)
+        result.update(result_per_category)
+        prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in preds]
+        result["gen_len"] = np.mean(prediction_lens)
+        result = {k: round(v, 4) for k, v in result.items()}
+        if save_prefix is not None:
+            with open(os.path.join(training_args.output_dir, f"{save_prefix}_eval_predictions.jsonl"), "w") as fout:
+                for example, pred in zip(dataset, decoded_preds):
+                    fout.write(json.dumps({
+                        "Task": example["Task"],
+                        "Dataset": example["Dataset"],
+                        "Instance": example["Instance"],
+                        "Prediction": pred
+                    }) + "\n")
+        return result
+        
+    
     print(f"-----Gradient checkpointing: {training_args.gradient_checkpointing} -----")
     if training_args.gradient_checkpointing:
         model.gradient_checkpointing_enable()
@@ -565,7 +595,7 @@ def main():
         eval_dataset=eval_dataset if training_args.do_eval else None,
         tokenizer=tokenizer,
         data_collator=data_collator,
-        compute_metrics=compute_rouge_metrics,
+        compute_metrics=compute_f1_metrics,
         callbacks=callbacks
     )
     

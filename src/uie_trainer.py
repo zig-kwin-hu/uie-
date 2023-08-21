@@ -282,6 +282,11 @@ class UIETrainer(Seq2SeqTrainer):
         if "attention_mask" in inputs:
             gen_kwargs["attention_mask"] = inputs.get("attention_mask", None)
 
+        if not gen_kwargs["num_beams"]:
+            gen_kwargs["num_beams"] = 1
+        if not gen_kwargs.get("max_new_tokens"):
+            gen_kwargs["max_new_tokens"] = gen_kwargs["max_length"]
+            
         generation_config = GenerationConfig(**gen_kwargs)
 
         # prepare generation inputs

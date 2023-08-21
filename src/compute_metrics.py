@@ -3,6 +3,7 @@ import json
 import os
 import argparse
 import logging
+from evaluation.evaluator import *
 
 from rouge import rouge_scorer
 from transformers import AutoTokenizer
@@ -112,8 +113,40 @@ def compute_grouped_metrics(predictions, references, groups, xlingual=False):
         group_metrics = compute_metrics(task_predictions, task_references, xlingual=xlingual)
         for metric, value in group_metrics.items():
             results[f"{metric}_for_{group}"] = value
+    
     return results
 
+def compute_f1(dataset, predictions):
+    f1 = 0
+    EvaluatorDict = {
+        'RE':EvaluatorRE,
+        'EE':EvaluatorEvent,
+        'NER':EvaluatorNER,
+        'EET':EvaluatorEET,
+        'EEA':EvaluatorEEA
+    }
+    task_dict = dict()
+    
+    for data, pred in zip(dataset, predictions):
+        task_name = data['Task']
+        dataset_name = data['Dataset']
+        task_name = task_name.split("_")[0]
+        if task_name not in task_dict:
+            task_dict[task_name] = dict()
+        if dataset_name not in task_dict[task_name]:
+            task_dict[task_name][dataset_name] = EvaluatorDict[task_name]()
+        task_dict[task_name][dataset_name].add(data, pred)
+    
+    metrics = {}
+    scores = []
+    for task_name, eval_dict in task_dict.items():
+        for dataset_name, evaluator in eval_dict.items():
+            metrics[f"F1_for_{dataset_name}"] = evaluator.get_metric()
+            scores.append(evaluator.get_metric())
+            
+    metrics['f1'] = sum(scores)/len(scores)
+    
+    return metrics
 
 def parse_args():
     parser = argparse.ArgumentParser()
