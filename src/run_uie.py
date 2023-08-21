@@ -289,6 +289,10 @@ class UIETrainingArguments(Seq2SeqTrainingArguments):
         metadata={"help": "If specifid, the model will do more evaluation at the beginning of training."}
     )
     do_demo: bool = field(default=False, metadata={"help": "Whether to run the model as a demo in the terminal."})
+    metric_for_best_model: Optional[str] = field(
+        default="f1",
+        metadata={"help": "Metric to define best model. Must be the name of a metric returned by the evaluation with or without the prefix `"eval_"`."}
+    )
 
 
 def main():
