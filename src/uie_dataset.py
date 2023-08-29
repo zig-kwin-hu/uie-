@@ -535,9 +535,6 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 
                 entities = [ent for ent in instance['entities'] if ent['type'] in positive_set]
                 
-                if 'other' in labels:
-                    other_entities = [ent for ent in instance['entities'] if ent['type'] in positive_types and ent['type'] not in positive_set]
-                
                 kv_pairs = []
 
                 for entity in entities:
@@ -546,11 +543,13 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                     kv_pair = [entity['name'], entity['type']]
                     kv_pairs.append(kv_pair)
                 
-                for entity in other_entities:
-                    if entity['type'] == 'NA' or entity['type'] == '':
-                        continue
-                    kv_pair = [entity['name'], 'other']
-                    kv_pairs.append(kv_pair)
+                if 'other' in labels:
+                    other_entities = [ent for ent in instance['entities'] if ent['type'] in positive_types and ent['type'] not in positive_set]
+                    for entity in other_entities:
+                        if entity['type'] == 'NA' or entity['type'] == '':
+                            continue
+                        kv_pair = [entity['name'], 'other']
+                        kv_pairs.append(kv_pair)
 
                 if len(kv_pairs) > 0:
                     label = " " + "; ".join(["{}: {}".format(v, k) for (k, v) in kv_pairs])
