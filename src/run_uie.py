@@ -61,7 +61,7 @@ from model.gpt_neox import GPTNeoXForCausalLM_WithLoss
 from uie_collator import DataCollatorForUIE
 from uie_dataset import gen_cache_path
 
-from uie_trainer import UIETrainer, DenserEvalCallback, SavePeftModelCallback, skip_instructions
+from uie_trainer import UIETrainer, DenserEvalCallback, SavePeftModelCallback, SaveMetricsCallback, skip_instructions, SaveBestModelsCallback, SkipEpochEvalCallback
 from compute_metrics import compute_f1, compute_metrics, compute_grouped_metrics
 
 # off wandb
@@ -80,6 +80,9 @@ except (LookupError, OSError):
     with FileLock(".lock") as lock:
         nltk.download("punkt", quiet=True)
 
+def get_best_checkpoints(output_dir):
+    paths = [os.path.join(output_dir, f) for f in os.listdir(output_dir) if f.startswith("best_model_for_")]
+    return paths
 
 @dataclass
 class ModelArguments:
@@ -293,6 +296,18 @@ class UIETrainingArguments(Seq2SeqTrainingArguments):
         default="f1",
         metadata={"help": 'Metric to define best model. Must be the name of a metric returned by the evaluation with or without the prefix `"eval_"`.'}
     )
+    only_save_best_model: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to only save the best checkpoint."}
+    )
+    predict_each_dataset_with_best: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Whether to predict each dataset with its own best checkpoint. This will introduce multiple round of prediction."}
+    )
+    skip_epoch_eval: Optional[int] = field(
+        default=0,
+        metadata={"help": "Whether to skip epoch eval. If specified, the model will do evaluation every skip_epoch_eval epochs."}
+    )
 
 
 def main():
@@ -332,10 +347,12 @@ def main():
     if os.path.isdir(training_args.output_dir) and training_args.do_train and not training_args.overwrite_output_dir:
         last_checkpoint = get_last_checkpoint(training_args.output_dir)
         if last_checkpoint is None and len(os.listdir(training_args.output_dir)) > 0:
-            raise ValueError(
-                f"Output directory ({training_args.output_dir}) already exists and is not empty. "
-                "Use --overwrite_output_dir to overcome."
-            )
+            #modified by huzikun, no need to raise error, because there is no checkpoint in the output_dir
+            #raise ValueError(
+            #    f"Output directory ({training_args.output_dir}) already exists and is not empty. "
+            #    "Use --overwrite_output_dir to overcome."
+            #)
+            pass
         elif last_checkpoint is not None and training_args.resume_from_checkpoint is None:
             logger.info(
                 f"Checkpoint detected, resuming training at {last_checkpoint}. To avoid this behavior, change "
@@ -366,7 +383,9 @@ def main():
         min_positive_labels=data_args.min_positive_labels
     )
     raw_datasets.cleanup_cache_files()
-
+    print(data_cache_dir)
+    
+    
     # Load pretrained model and tokenizer
     #
     # Distributed training:
@@ -422,7 +441,6 @@ def main():
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
-        load_in_8bit=use_lora,
         torch_dtype=torch.float16 if use_lora else None,
         device_map=device_map
     )
@@ -454,7 +472,7 @@ def main():
         )
         
     if use_lora:
-        model = prepare_model_for_int8_training(model)
+        # model = prepare_model_for_int8_training(model)
 
         config = LoraConfig(
             r=model_args.lora_r,
@@ -501,6 +519,8 @@ def main():
         eval_dataset = raw_datasets["validation"]
         if data_args.max_eval_samples is not None:
             eval_dataset = eval_dataset.select(range(data_args.max_eval_samples))
+    else:
+        training_args.metric_for_best_model = None
 
     if training_args.do_predict:
         if "test" not in raw_datasets:
@@ -587,10 +607,16 @@ def main():
         model.gradient_checkpointing_enable()
 
     callbacks = []
-    if use_lora:
-        callbacks.append(SavePeftModelCallback)
     if training_args.denser_evaluation:
         callbacks.append(DenserEvalCallback)
+    if training_args.do_train:
+        callbacks.append(SaveMetricsCallback)
+    if training_args.only_save_best_model:
+        callbacks.append(SaveBestModelsCallback)
+    if training_args.skip_epoch_eval > 0:
+        assert training_args.evaluation_strategy == 'epoch', "skip_epoch_eval only works with epoch evaluation strategy"
+        assert training_args.save_strategy == 'epoch', "skip_epoch_eval only works with epoch save strategy"
+        callbacks.append(SkipEpochEvalCallback)
     
     trainer = UIETrainer(
         model=model,
@@ -625,8 +651,17 @@ def main():
             checkpoint = training_args.resume_from_checkpoint
         elif last_checkpoint is not None:
             checkpoint = last_checkpoint
+            # modified by huzikun, after resuming, the epoch number should be the remaining epoch number
+            training_steps_per_epoch = int(len(train_dataset) / 
+                                       (training_args.per_device_train_batch_size*training_args.gradient_accumulation_steps))
+            trained_steps = int(checkpoint.split('-')[-1])
+            trained_epoch_num = int(trained_steps / training_steps_per_epoch)
+            #trainer.args.num_train_epochs = training_args.num_train_epochs - trained_epoch_num
+            #print('left num_train_epochs: ', trainer.args.num_train_epochs)
+        print('resume_from_checkpoint: ', training_args.resume_from_checkpoint)
         
         train_result = trainer.train(resume_from_checkpoint=checkpoint)
+
         trainer.save_model()  # Saves the tokenizer too for easy upload
 
         metrics = train_result.metrics
@@ -656,52 +691,79 @@ def main():
     if training_args.do_predict:
         logger.info("*** Prediction ***")
         logger.info("*** Loading CheckPoint ***")
-        checkpoint = None
-        if os.path.isdir(training_args.output_dir):
-            checkpoint = get_last_checkpoint(training_args.output_dir)
-        if training_args.resume_from_checkpoint is not None:
-            checkpoint = training_args.resume_from_checkpoint
-        # without last ckpt and resume ckpt, would predict with current model
-        # if checkpoint:
-        #     model = model_class.from_pretrained(checkpoint)
-        #     trainer = UIETrainer(
-        #         model=model,
-        #         args=training_args,
-        #         train_dataset=train_dataset if training_args.do_train else None,
-        #         eval_dataset=eval_dataset if training_args.do_eval else None,
-        #         tokenizer=tokenizer,
-        #         data_collator=data_collator,
-        #         compute_metrics=compute_rouge_metrics,
-        #         callbacks=callbacks
-        #     )
-        #     if use_lora:
-        #         old_state_dict = model.state_dict
-        #         model.state_dict = (
-        #             lambda self, *_, **__: get_peft_model_state_dict(
-        #                 self, old_state_dict()
-        #             )
-        #         ).__get__(model, type(model))
-
+        
         if data_args.max_predict_samples is not None:
             predict_dataset = predict_dataset.select(range(data_args.max_predict_samples))
+        
+        checkpoint = None
+        
+        # Redundant re-initialize model and trainer if do_train True and not predict_each_dataset_with_best because the model output and trainer is expected checkpoint on default (Best model if load_best_model_at_end True OR last checkpoint when False)
+        if training_args.predict_each_dataset_with_best:
+            checkpoints = get_best_checkpoints(training_args.output_dir)
+            assert len(checkpoints) > 0, "No best checkpoint found"
 
-        predict_results = trainer.predict(
-            predict_dataset,
-            metric_key_prefix="predict",
-            max_new_tokens=max_new_tokens,
-            num_beams=num_beams,
-            repetition_penalty=repetition_penalty,
-            pad_token_id=tokenizer.pad_token_id
-        )
-        metrics = predict_results.metrics
-        max_predict_samples = (
-            data_args.max_predict_samples if data_args.max_predict_samples is not None else len(predict_dataset)
-        )
-        metrics["predict_samples"] = min(max_predict_samples, len(predict_dataset))
-        trainer.log(metrics)
-        trainer.log_metrics("predict", metrics)
-        trainer.save_metrics("predict", metrics)
-        all_metrics.update(metrics)
+            for checkpoint in checkpoints:
+                print(f"loading checkpoint {checkpoint}")
+                if not use_lora:
+                    model = model_class.from_pretrained(checkpoint)
+                else:
+                    checkpoint_name = os.path.join(
+                        checkpoint, "adapter_model.bin"
+                    )
+                    adapters_weights = torch.load(checkpoint_name)
+                    set_peft_model_state_dict(model, adapters_weights)
+                
+                trainer = UIETrainer(
+                    model=model,
+                    args=training_args,
+                    train_dataset=train_dataset if training_args.do_train else None,
+                    eval_dataset=eval_dataset if training_args.do_eval else None,
+                    tokenizer=tokenizer,
+                    data_collator=data_collator,
+                    compute_metrics=compute_f1_metrics,
+                    callbacks=callbacks
+                )
+                
+                predict_results = trainer.predict(
+                    predict_dataset,
+                    metric_key_prefix="predict",
+                    max_new_tokens=max_new_tokens,
+                    num_beams=num_beams,
+                    repetition_penalty=repetition_penalty,
+                    pad_token_id=tokenizer.pad_token_id
+                )
+                metrics = predict_results.metrics
+                max_predict_samples = (
+                    data_args.max_predict_samples if data_args.max_predict_samples is not None else len(predict_dataset)
+                )
+                metrics["predict_samples"] = min(max_predict_samples, len(predict_dataset))
+                trainer.log({"checkpoint":checkpoint})
+                trainer.log_metrics("predict", metrics)
+                trainer.save_metrics("predict", metrics)
+                all_metrics.update(metrics)
+                if training_args.predict_each_dataset_with_best:
+                    print(f"Saving predictions for checkpoint {checkpoint}")
+                    path = os.path.join(checkpoint, "all_results.json")
+                    with open(path, "w") as f:
+                        json.dump(metrics, f, indent=4, sort_keys=True)
+        else:
+            predict_results = trainer.predict(
+                predict_dataset,
+                metric_key_prefix="predict",
+                max_new_tokens=max_new_tokens,
+                num_beams=num_beams,
+                repetition_penalty=repetition_penalty,
+                pad_token_id=tokenizer.pad_token_id
+            )
+            metrics = predict_results.metrics
+            max_predict_samples = (
+                data_args.max_predict_samples if data_args.max_predict_samples is not None else len(predict_dataset)
+            )
+            metrics["predict_samples"] = min(max_predict_samples, len(predict_dataset))
+            trainer.log(metrics)
+            trainer.log_metrics("predict", metrics)
+            trainer.save_metrics("predict", metrics)
+            all_metrics.update(metrics)
 
     if training_args.do_demo:
         logger.info("Serving the model as a demo...")
