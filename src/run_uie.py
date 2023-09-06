@@ -52,6 +52,7 @@ from peft import (
     get_peft_model_state_dict,
     prepare_model_for_int8_training,
     set_peft_model_state_dict,
+    PeftModel
 )
 
 from model.bloom import BloomForCausalLM_WithLoss
