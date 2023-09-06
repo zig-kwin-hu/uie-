@@ -442,7 +442,6 @@ def main():
         cache_dir=model_args.cache_dir,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
-        torch_dtype=torch.float16 if use_lora else None,
         device_map=device_map
     )
     model.resize_token_embeddings(len(tokenizer))
@@ -630,14 +629,17 @@ def main():
         callbacks=callbacks
     )
     
-    if use_lora:
-        old_state_dict = model.state_dict
-        model.state_dict = (
-            lambda self, *_, **__: get_peft_model_state_dict(
-                self, old_state_dict()
-            )
-        ).__get__(model, type(model))
+    # For load_best_model() in transformers trainer, because PyTorch doesn't support to load a quantized model from checkpoint into int8, so we need PyTorch's state_dict.
+    # if use_lora:
+    #     old_state_dict = model.state_dict
+    #     model.state_dict = (
+    #         lambda self, *_, **__: get_peft_model_state_dict(
+    #             self, old_state_dict()
+    #         )
+    #     ).__get__(model, type(model))
     
+    model.config.use_cache = False
+
     if torch.__version__ >= "2" and sys.platform != "win32":
         model = torch.compile(model)
         

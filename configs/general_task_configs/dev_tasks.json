@@ -1,4 +1,10 @@
 {
+    "RE": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "NYT11_sample_30000"
+        }
+    ],
     "EET": [
         {
             "sampling strategy": "full",

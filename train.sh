@@ -3,8 +3,8 @@ set -e
 set -x
 alias python=python3
 # python3 -c "import nltk; nltk.download('punkt', quiet=True)"
-BD_NAME=zenithbigvol
-export NLTK_DATA=/mnt/bd/$BD_NAME/nltk_data
+BD_NAME=.
+export NLTK_DATA=$BD_NAME/nltk_data
 
 export BYTED_TORCH_FX=O0
 export NCCL_IB_DISABLE=0 
@@ -19,17 +19,17 @@ export CUDA_DEVICE_ORDER="PCI_BUS_ID"
 # export TRANSFORMERS_OFFLINE=1
 
 # model and data
-model_name_or_path=google/flan-t5-xxl
-data_dir=/mnt/bd/$BD_NAME/data/IE_data_v8
-output_dir=/mnt/bd/$BD_NAME/output/flan-t5-xxl-v8-plus-aux-oversamples-newf
-export TRANSFORMERS_CACHE=/mnt/bd/$BD_NAME/huggingface
+model_name_or_path=google/flan-t5-xl
+data_dir=$BD_NAME/data/ie_instruct
+output_dir=$BD_NAME/output/flan-t5-xxl-v8-plus-aux-oversamples-newf
+export TRANSFORMERS_CACHE=$BD_NAME/huggingface
 
 # configs
-DEEPSPEED_CONFIG=configs/ds_configs/stage3_without_offload.config
+DEEPSPEED_CONFIG=./configs/ds_configs/stage3.config
 
 
-MASTER_ADDR=${METIS_WORKER_0_HOST}
-MASTER_PORT=${METIS_WORKER_0_PORT}
+MASTER_ADDR=localhost
+MASTER_PORT=1234
 
 N_GPUS=${ARNOLD_WORKER_GPU}
 MICRO_TRAIN_BATCH_SIZE=2
@@ -45,8 +45,8 @@ deepspeed --master_port $MASTER_PORT src/run_uie.py \
    --predict_with_generate \
    --model_name_or_path $model_name_or_path \
    --data_dir $data_dir \
-   --task_config_dir configs/v4_multi_task_configs \
-   --instruction_file configs/instruction_config.json \
+   --task_config_dir ./configs/multi_task_configs \
+   --instruction_file ./configs/instruction_config.json \
    --instruction_strategy single \
    --output_dir $output_dir \
    --input_record_file flan-t5.record \
@@ -62,8 +62,8 @@ deepspeed --master_port $MASTER_PORT src/run_uie.py \
    --generation_max_length 50 \
    --max_num_instances_per_task 10000 \
    --max_num_instances_per_eval_task 200 \
-   --add_task_name True \
-   --add_dataset_name True \
+   --add_task_name False \
+   --add_dataset_name False \
    --num_examples 0 \
    --overwrite_output_dir \
    --overwrite_cache \

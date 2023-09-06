@@ -1,0 +1,12 @@
+{
+	"RE":[
+		{
+	        "sampling strategy": "random",
+		    "dataset name": "ADE_corpus-1500"
+		},
+		{
+	        "sampling strategy": "random",
+		    "dataset name": "semval-RE-1500"
+		}
+	]
+}

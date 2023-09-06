@@ -1,11 +1,29 @@
 {
-    "NER": [
+    "RE": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "NYT11_sample_30000"
+        }
+    ],
+    "EP": [
         {
             "sampling strategy": "random",
+            "dataset name": "NYT11_sample_30000"
+        }
+    ],
+    "EPR": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "NYT11_sample_30000"
+        }
+    ],
+    "NER": [
+        {
+            "sampling strategy": "full",
             "dataset name": "ACE 2005_sample_15000"
         }
     ],
-    "NER_TF": [
+    "ES": [
         {
             "sampling strategy": "random",
             "dataset name": "ACE 2005_sample_15000"
@@ -17,13 +35,25 @@
             "dataset name": "ACE 2005_sample_15000"
         }
     ],
+    "NER_TF": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "ACE 2005_sample_15000"
+        }
+    ],
     "EET": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "ACE05"
+        }
+    ],
+    "EE": [
         {
             "sampling strategy": "random",
             "dataset name": "ACE05"
         }
     ],
-    "EE": [
+    "EEA": [
         {
             "sampling strategy": "random",
             "dataset name": "ACE05"

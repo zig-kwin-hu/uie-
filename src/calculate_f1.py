@@ -51,7 +51,7 @@ def calculate_f1(output_dir):
                 print('%48s\t%g'%row)
 
 if __name__ == '__main__':
-    root = '../output/flant5-11b-v8-zeroshot'
+    root = './output/NER/flan-t5-base_256bs_ord'
     os.environ['RANDOM_RECORD'] = '1'   # 是否开启随机记录
     os.environ['EXPORT_IMG'] = '0'      # 是否导出混淆矩阵图片
     calculate_f1(root)

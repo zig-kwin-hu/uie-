@@ -273,8 +273,10 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         else:
             return random.choice(task_instructions)
 
-    def _get_prompt(self, instruction, labels_str=None):
-        if labels_str:
+    def _get_prompt(self, instruction, labels_str=None, explain=None):
+        if explain:
+            prompt = self.config.prompt['prompt_w_explain'].format(instruction=instruction, text='{0}', explain=explain)
+        elif labels_str:
             prompt = self.config.prompt['prompt_option'].format(instruction=instruction, options=labels_str, text='{0}')
         else:
             prompt = self.config.prompt['prompt_no_option'].format(instruction=instruction, text='{0}')
@@ -423,7 +425,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         for idx, instance in enumerate(instances):
             example = sample_template.copy()
             instruction = self._get_instruction('NER_TF')
-            instruction = self._get_prompt(instruction)
+            instruction = self._get_prompt(instruction, explain="There is no entity exist in the given text.")
 
             if len(instance['entities']) > 0:
                 label = " True"
@@ -512,7 +514,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             positive_types = list(set(ev['type'] for ev in instance['entities']))
             label_set = []
             
-            add_other = True
+            add_other = subset == "train"
             if add_other:
                 labels.append('other')
                 
@@ -891,7 +893,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             example = sample_template.copy()
             instruction = self._get_instruction('EET_TF')
             
-            instruction = self._get_prompt(instruction)
+            self._get_prompt(instruction, explain="There is no event occur in the given text.")
 
             if len(instance['events']) > 0:
                 label = " True"

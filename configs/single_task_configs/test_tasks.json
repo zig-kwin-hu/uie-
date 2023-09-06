@@ -2,15 +2,7 @@
     "EET": [
         {
             "sampling strategy": "full",
-            "dataset name": "PHEE"
-        },
-        {
-            "sampling strategy": "full",
             "dataset name": "ACE05"
-        },
-        {
-            "sampling strategy": "full",
-            "dataset name": "CASIE"
         }
     ]
 }

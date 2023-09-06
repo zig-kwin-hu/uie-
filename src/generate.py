@@ -7,7 +7,7 @@ import gradio as gr
 import torch
 import transformers
 from peft import PeftModel
-from transformers import GenerationConfig, AutoModelForCausalLM, LlamaTokenizer, AutoTokenizer, AutoModelForSeq2SeqLM
+from transformers import GenerationConfig, AutoModelForCausalLM, LlamaTokenizer, AutoTokenizer, AutoModelForSeq2SeqLM, T5ForConditionalGeneration
 
 from utils.callbacks import Iteratorize, Stream
 
@@ -49,12 +49,12 @@ def main(
     tokenizer = AutoTokenizer.from_pretrained(tokenizer_name or base_model)
     model_class = AutoModelForSeq2SeqLM if "t5" in base_model.lower() else AutoModelForCausalLM
     if device == "cuda":
-        model = model_class.from_pretrained(
+        model = T5ForConditionalGeneration.from_pretrained(
             base_model,
             load_in_8bit=load_8bit,
             torch_dtype=torch.float16 if load_8bit else None,
             cache_dir="./huggingface",
-            device_map={"":0}
+            device_map="auto"
         )
         print("Loaded base model: ", base_model)
         if lora_weights:

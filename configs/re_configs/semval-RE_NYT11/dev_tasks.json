@@ -1,0 +1,12 @@
+{
+	"RE":[
+		{
+	        "sampling strategy": "full",
+		    "dataset name": "NYT11-1500"
+		},
+		{
+	        "sampling strategy": "full",
+		    "dataset name": "semval-RE-1500"
+		}
+	]
+}

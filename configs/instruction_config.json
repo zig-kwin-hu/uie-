@@ -14,9 +14,6 @@
     {"instruction_type": "zero-shot", "instruction": "Please find all the entity words associated with the category in the given text.Output format is \"type1: word1; type2: word2\". \n"},
     {"instruction_type": "zero-shot", "instruction": "Please tell me all the entity words in the text that belong to a given category.Output format is \"type1: word1; type2: word2\". \n"}
   ],
-  "NER_SPECIFIC":[
-    {"instruction_type": "zero-shot", "instruction": "PExtract the company names and job titles from the list of employee profiles"}
-  ],
   "NER_TF": [
     {"instruction_type": "zero-shot", "instruction": "Determine whether an entity has taken place in the provided text. Respond with either True or False. "},
     {"instruction_type": "zero-shot", "instruction": "Identify if any entity is exist in the given input. Indicate your answer as either True or False. "},
@@ -60,11 +57,6 @@
     {"instruction_type": "zero-shot", "instruction": "Identify the trigger word from the input, considering that the event type associated with it is {type}."},
     {"instruction_type": "zero-shot", "instruction": "Determine the trigger word present in the input, while taking into account that it corresponds to the event type {type}."},
     {"instruction_type": "zero-shot", "instruction": "You are required to identify the trigger word in the input, with the additional information that it pertains to the event type {type}."}
-  ],
-  "EET_CAT": [
-    {"instruction_type": "zero-shot", "instruction": "Please tell me event type and its trigger word from given type options. Output format is \"type: trigger\". "},
-    {"instruction_type": "zero-shot", "instruction": "Identify the type of event from the given options and the word that triggers or relates to that event type. "},
-    {"instruction_type": "zero-shot", "instruction": "Determine the type of an event and identify the trigger keyword associated with that event type. "}
   ],
   "EXAMPLE_EET": [
     {"instruction_type": "zero-shot", "instruction": "Show me some examples of event type and trigger word."},

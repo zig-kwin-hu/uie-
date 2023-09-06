@@ -3,5 +3,6 @@
     "prompt_option": "{instruction} Option: {options} \nText: {text} \nAnswer:",
     "prompt_no_option": "{instruction} \nText: {text} \nAnswer:",
     "prompt_no_text": "{instruction}",
+    "prompt_w_explain": "{instruction} \nText: {text} \nExplain: {explain}\nAnswer:",
     "response_split": "Answer:"    
 }

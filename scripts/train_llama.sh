@@ -10,9 +10,7 @@ python src/run_uie.py \
    --instruction_file ./configs/instruction_config.json \
    --prompt_file ./prompts/instructUIE.json \
    --instruction_strategy single \
-   --min_negative_labels -1 \
-   --min_positive_labels -1 \
-   --output_dir ./output/ACE05/llama2-7B-chat_1 \
+   --output_dir ./output/ACE05/llama2-7B-chat-ord \
    --input_record_file flan-t5.record \
    --per_device_train_batch_size 8 \
    --per_device_eval_batch_size 8 \
@@ -41,5 +39,5 @@ python src/run_uie.py \
    --save_total_limit 1 \
    --save_steps 100 \
    --lora_target_modules q_proj,k_proj,v_proj,o_proj \
-   --lora_r 16 \
+   --lora_r 8 \
    --use_auth_token True \
