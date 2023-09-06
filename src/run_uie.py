@@ -702,16 +702,26 @@ def main():
             checkpoints = get_best_checkpoints(training_args.output_dir)
             assert len(checkpoints) > 0, "No best checkpoint found"
 
+            ori_model = None
             for checkpoint in checkpoints:
                 print(f"loading checkpoint {checkpoint}")
                 if not use_lora:
                     model = model_class.from_pretrained(checkpoint)
                 else:
-                    checkpoint_name = os.path.join(
-                        checkpoint, "adapter_model.bin"
+                    if not ori_model:
+                        ori_model = model_class.from_pretrained(
+                            model_args.model_name_or_path,
+                            from_tf=bool(".ckpt" in model_args.model_name_or_path),
+                            cache_dir=model_args.cache_dir,
+                            revision=model_args.model_revision,
+                            use_auth_token=True if model_args.use_auth_token else None,
+                            device_map=device_map
+                        )
+                    print(ori_model)
+                    model = PeftModel.from_pretrained(
+                        ori_model,
+                        checkpoint
                     )
-                    adapters_weights = torch.load(checkpoint_name)
-                    set_peft_model_state_dict(model, adapters_weights)
                 
                 trainer = UIETrainer(
                     model=model,
