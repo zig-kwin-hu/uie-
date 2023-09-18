@@ -2,13 +2,23 @@ import torch
 from transformers import GenerationConfig
 from transformers.trainer_seq2seq import Seq2SeqTrainer
 from transformers.trainer import *
-from transformers.trainer_callback import TrainerCallback, CallbackHandler
+from transformers.trainer_callback import (
+    CallbackHandler,
+    PrinterCallback,
+    TrainerCallback,
+    TrainerControl,
+    TrainerState,
+)
+from transformers.deepspeed import deepspeed_init, is_deepspeed_zero3_enabled
 
 
 from uie_collator import SUPPORTED_DECODER_MODELS, check_model
 from uie_dataset import ANSWER_PREFIX
 import os
 import json
+from transformers.trainer_pt_utils import nested_truncate, nested_concat, nested_numpify
+
+
 def skip_instructions(model, predictions_ids, tokenizer, dataset, ignore_idx=-100):
     predictions_ids = np.where(predictions_ids == ignore_idx, tokenizer.pad_token_id, predictions_ids)
 
@@ -137,8 +147,7 @@ class SaveBestModelsCallback(TrainerCallback):
         return control
 
 class UIETrainer(Seq2SeqTrainer):
-    
-    # use customized callback handler
+    #modified by huzikun, use customized callback handler
     def __init__(
         self,
         model: Union[PreTrainedModel, nn.Module] = None,
