@@ -309,6 +309,14 @@ class UIETrainingArguments(Seq2SeqTrainingArguments):
         default=0,
         metadata={"help": "Whether to skip epoch eval. If specified, the model will do evaluation every skip_epoch_eval epochs."}
     )
+    use_lora: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Define lora training. Auto set to True if lora_target_modules is defined, else False."}
+    )
+    save_lora_weights_only: Optional[bool] = field(
+        default=False,
+        metadata={"help": "Save only lora weights on saving checkpoint (without original model, optimizer and trainer states). Auto set to False if lora_target_modules is not defined."}
+    )
 
 
 def main():
@@ -363,7 +371,9 @@ def main():
     # Set seed before initializing model.
     set_seed(training_args.seed)
     data_cache_dir = gen_cache_path(training_args.output_dir, data_args)
-    use_lora = model_args.lora_target_modules != None
+
+    training_args.save_lora_weights_only = False if not model_args.lora_target_modules else training_args.save_lora_weights_only
+    training_args.use_lora = model_args.lora_target_modules != None
     if model_args.lora_target_modules:
         model_args.lora_target_modules = model_args.lora_target_modules.split(',')
     
@@ -708,7 +718,7 @@ def main():
             ori_model = None
             for checkpoint in checkpoints:
                 print(f"loading checkpoint {checkpoint}")
-                if not use_lora:
+                if not training_args.use_lora:
                     model = model_class.from_pretrained(checkpoint)
                 else:
                     if not ori_model:
@@ -720,7 +730,6 @@ def main():
                             use_auth_token=True if model_args.use_auth_token else None,
                             device_map=device_map
                         )
-                    print(ori_model)
                     model = PeftModel.from_pretrained(
                         ori_model,
                         checkpoint

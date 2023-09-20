@@ -9,14 +9,14 @@ from transformers.trainer_callback import (
     TrainerControl,
     TrainerState,
 )
+from transformers.trainer_pt_utils import nested_truncate, nested_concat, nested_numpify
 from transformers.deepspeed import deepspeed_init, is_deepspeed_zero3_enabled
-
+from peft import get_peft_model_state_dict
 
 from uie_collator import SUPPORTED_DECODER_MODELS, check_model
 from uie_dataset import ANSWER_PREFIX
 import os
 import json
-from transformers.trainer_pt_utils import nested_truncate, nested_concat, nested_numpify
 
 
 def skip_instructions(model, predictions_ids, tokenizer, dataset, ignore_idx=-100):
@@ -374,9 +374,6 @@ class UIETrainer(Seq2SeqTrainer):
         # Do this before wrapping.
         eval_dataset = getattr(dataloader, "dataset", None)
 
-        if is_torch_tpu_available():
-            dataloader = pl.ParallelLoader(dataloader, [args.device]).per_device_loader(args.device)
-
         if args.past_index >= 0:
             self._past = None
 
@@ -630,7 +627,7 @@ class UIETrainer(Seq2SeqTrainer):
         # want to save except FullyShardedDDP.
         # assert unwrap_model(model) is self.model, "internal model should be a reference to self.model"
 
-        # Rewrite: added if check to use given folder name or default name
+        # Modified: added if check to use given folder name or default name
         # Save model checkpoint
         if checkpoint_folder is None:
             checkpoint_folder = f"{PREFIX_CHECKPOINT_DIR}-{self.state.global_step}"
@@ -640,105 +637,123 @@ class UIETrainer(Seq2SeqTrainer):
 
         run_dir = self._get_output_dir(trial=trial)
         output_dir = os.path.join(run_dir, checkpoint_folder)
-        self.save_model(output_dir, _internal_call=True)
-        if self.is_deepspeed_enabled:
-            # under zero3 model file itself doesn't get saved since it's bogus! Unless deepspeed
-            # config `stage3_gather_16bit_weights_on_model_save` is True
-            self.model_wrapped.save_checkpoint(output_dir)
 
-        # Save optimizer and scheduler
-        if self.sharded_ddp == ShardedDDPOption.SIMPLE:
-            self.optimizer.consolidate_state_dict()
+        if self.args.use_lora and self.args.save_lora_weights_only:
+            # Modified: if use_lora is True, model will be PeftModel and the save_pretrained only save adapter_model.bin and adapter_config.json
+            self.model.save_pretrained(output_dir)
+        else:
+            # Transformer trainer._save_checkpoint original code
+            self.save_model(output_dir, _internal_call=True)
+            if self.is_deepspeed_enabled:
+                # under zero3 model file itself doesn't get saved since it's bogus! Unless deepspeed
+                # config `stage3_gather_16bit_weights_on_model_save` is True
+                self.model_wrapped.save_checkpoint(output_dir)
 
-        if self.fsdp:
-            # FSDP has a different interface for saving optimizer states.
-            # Needs to be called on all ranks to gather all states.
-            # full_optim_state_dict will be deprecated after Pytorch 2.2!
-            full_osd = self.model.__class__.full_optim_state_dict(self.model, self.optimizer)
+            # Save optimizer and scheduler
+            if self.sharded_ddp == ShardedDDPOption.SIMPLE:
+                self.optimizer.consolidate_state_dict()
 
-        if is_torch_tpu_available():
-            xm.rendezvous("saving_optimizer_states")
-            xm.save(self.optimizer.state_dict(), os.path.join(output_dir, OPTIMIZER_NAME))
-            with warnings.catch_warnings(record=True) as caught_warnings:
-                xm.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, SCHEDULER_NAME))
-                reissue_pt_warnings(caught_warnings)
-        elif is_sagemaker_mp_enabled():
-            opt_state_dict = self.optimizer.local_state_dict(gather_if_shard=False)
-            smp.barrier()
-            if smp.rdp_rank() == 0 or smp.state.cfg.shard_optimizer_state:
-                smp.save(
-                    opt_state_dict,
-                    os.path.join(output_dir, OPTIMIZER_NAME),
-                    partial=True,
-                    v3=smp.state.cfg.shard_optimizer_state,
-                )
-            if self.args.should_save:
+            if self.fsdp:
+                # FSDP has a different interface for saving optimizer states.
+                # Needs to be called on all ranks to gather all states.
+                # full_optim_state_dict will be deprecated after Pytorch 2.2!
+                full_osd = self.model.__class__.full_optim_state_dict(self.model, self.optimizer)
+
+            if is_torch_tpu_available():
+                xm.rendezvous("saving_optimizer_states")
+                xm.save(self.optimizer.state_dict(), os.path.join(output_dir, OPTIMIZER_NAME))
+                with warnings.catch_warnings(record=True) as caught_warnings:
+                    xm.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, SCHEDULER_NAME))
+                    reissue_pt_warnings(caught_warnings)
+            elif is_sagemaker_mp_enabled():
+                opt_state_dict = self.optimizer.local_state_dict(gather_if_shard=False)
+                smp.barrier()
+                if smp.rdp_rank() == 0 or smp.state.cfg.shard_optimizer_state:
+                    smp.save(
+                        opt_state_dict,
+                        os.path.join(output_dir, OPTIMIZER_NAME),
+                        partial=True,
+                        v3=smp.state.cfg.shard_optimizer_state,
+                    )
+                if self.args.should_save:
+                    with warnings.catch_warnings(record=True) as caught_warnings:
+                        torch.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, SCHEDULER_NAME))
+                    reissue_pt_warnings(caught_warnings)
+                    if self.do_grad_scaling:
+                        torch.save(self.scaler.state_dict(), os.path.join(output_dir, SCALER_NAME))
+            elif self.args.should_save and not self.is_deepspeed_enabled:
+                # deepspeed.save_checkpoint above saves model/optim/sched
+                if self.fsdp:
+                    torch.save(full_osd, os.path.join(output_dir, OPTIMIZER_NAME))
+                else:
+                    torch.save(self.optimizer.state_dict(), os.path.join(output_dir, OPTIMIZER_NAME))
+
                 with warnings.catch_warnings(record=True) as caught_warnings:
                     torch.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, SCHEDULER_NAME))
                 reissue_pt_warnings(caught_warnings)
                 if self.do_grad_scaling:
                     torch.save(self.scaler.state_dict(), os.path.join(output_dir, SCALER_NAME))
-        elif self.args.should_save and not self.is_deepspeed_enabled:
-            # deepspeed.save_checkpoint above saves model/optim/sched
-            if self.fsdp:
-                torch.save(full_osd, os.path.join(output_dir, OPTIMIZER_NAME))
+
+            # Determine the new best metric / best model checkpoint
+            if metrics is not None and self.args.metric_for_best_model is not None:
+                metric_to_check = self.args.metric_for_best_model
+                if not metric_to_check.startswith("eval_"):
+                    metric_to_check = f"eval_{metric_to_check}"
+                metric_value = metrics[metric_to_check]
+
+                operator = np.greater if self.args.greater_is_better else np.less
+                if (
+                    self.state.best_metric is None
+                    or self.state.best_model_checkpoint is None
+                    or operator(metric_value, self.state.best_metric)
+                ):
+                    self.state.best_metric = metric_value
+                    self.state.best_model_checkpoint = output_dir
+
+            # Save the Trainer state
+            if self.args.should_save:
+                self.state.save_to_json(os.path.join(output_dir, TRAINER_STATE_NAME))
+
+            # Save RNG state in non-distributed training
+            rng_states = {
+                "python": random.getstate(),
+                "numpy": np.random.get_state(),
+                "cpu": torch.random.get_rng_state(),
+            }
+            if torch.cuda.is_available():
+                if self.args.parallel_mode == ParallelMode.DISTRIBUTED:
+                    # In non distributed, we save the global CUDA RNG state (will take care of DataParallel)
+                    rng_states["cuda"] = torch.cuda.random.get_rng_state_all()
+                else:
+                    rng_states["cuda"] = torch.cuda.random.get_rng_state()
+
+            if is_torch_tpu_available():
+                rng_states["xla"] = xm.get_rng_state()
+
+            # A process can arrive here before the process 0 has a chance to save the model, in which case output_dir may
+            # not yet exist.
+            os.makedirs(output_dir, exist_ok=True)
+
+            if self.args.world_size <= 1:
+                torch.save(rng_states, os.path.join(output_dir, "rng_state.pth"))
             else:
-                torch.save(self.optimizer.state_dict(), os.path.join(output_dir, OPTIMIZER_NAME))
+                torch.save(rng_states, os.path.join(output_dir, f"rng_state_{self.args.process_index}.pth"))
 
-            with warnings.catch_warnings(record=True) as caught_warnings:
-                torch.save(self.lr_scheduler.state_dict(), os.path.join(output_dir, SCHEDULER_NAME))
-            reissue_pt_warnings(caught_warnings)
-            if self.do_grad_scaling:
-                torch.save(self.scaler.state_dict(), os.path.join(output_dir, SCALER_NAME))
+            if self.args.push_to_hub:
+                self._push_from_checkpoint(output_dir)
 
-        # Determine the new best metric / best model checkpoint
-        if metrics is not None and self.args.metric_for_best_model is not None:
-            metric_to_check = self.args.metric_for_best_model
-            if not metric_to_check.startswith("eval_"):
-                metric_to_check = f"eval_{metric_to_check}"
-            metric_value = metrics[metric_to_check]
+            # Maybe delete some older checkpoints.
+            if self.args.should_save:
+                self._rotate_checkpoints(use_mtime=True, output_dir=run_dir)
 
-            operator = np.greater if self.args.greater_is_better else np.less
-            if (
-                self.state.best_metric is None
-                or self.state.best_model_checkpoint is None
-                or operator(metric_value, self.state.best_metric)
-            ):
-                self.state.best_metric = metric_value
-                self.state.best_model_checkpoint = output_dir
-
-        # Save the Trainer state
-        if self.args.should_save:
-            self.state.save_to_json(os.path.join(output_dir, TRAINER_STATE_NAME))
-
-        # Save RNG state in non-distributed training
-        rng_states = {
-            "python": random.getstate(),
-            "numpy": np.random.get_state(),
-            "cpu": torch.random.get_rng_state(),
-        }
-        if torch.cuda.is_available():
-            if self.args.parallel_mode == ParallelMode.DISTRIBUTED:
-                # In non distributed, we save the global CUDA RNG state (will take care of DataParallel)
-                rng_states["cuda"] = torch.cuda.random.get_rng_state_all()
-            else:
-                rng_states["cuda"] = torch.cuda.random.get_rng_state()
-
-        if is_torch_tpu_available():
-            rng_states["xla"] = xm.get_rng_state()
-
-        # A process can arrive here before the process 0 has a chance to save the model, in which case output_dir may
-        # not yet exist.
-        os.makedirs(output_dir, exist_ok=True)
-
-        if self.args.world_size <= 1:
-            torch.save(rng_states, os.path.join(output_dir, "rng_state.pth"))
-        else:
-            torch.save(rng_states, os.path.join(output_dir, f"rng_state_{self.args.process_index}.pth"))
-
-        if self.args.push_to_hub:
-            self._push_from_checkpoint(output_dir)
-
-        # Maybe delete some older checkpoints.
-        if self.args.should_save:
-            self._rotate_checkpoints(use_mtime=True, output_dir=run_dir)
+        # Modified: Save lora weights on deepspeed zero3. This part must process after original code to override the empty adapter_model.bin due to incompatible between zero3 and peft
+        if self.args.use_lora and self.is_deepspeed_enabled and is_deepspeed_zero3_enabled():
+            # save adapter config
+            # self.model.peft_config.save_pretrained(output_dir)
+            # get state dict through deepspeed engine
+            engine_state_dict = self.model_wrapped._zero3_consolidated_16bit_state_dict()
+            lora_state_dict = get_peft_model_state_dict(self.model, engine_state_dict)
+            
+            if self.args.local_rank == 0:
+                torch.save(lora_state_dict, os.path.join(output_dir, "adapter_model.bin"))
+                print(f"Save adapter model at {output_dir}")
