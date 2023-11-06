@@ -142,3 +142,4 @@ img/
 data/
 huggingface/
 cache/
+config/
