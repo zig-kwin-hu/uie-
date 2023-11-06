@@ -17,7 +17,15 @@ from uie_collator import SUPPORTED_DECODER_MODELS, check_model
 from uie_dataset import ANSWER_PREFIX
 import os
 import json
-
+import numpy as np
+import IPython
+from typing import NamedTuple, Optional, Union, Tuple, Dict, List, Callable, Iterable
+class UIEPredictionOutput(NamedTuple):
+    predictions: Union[np.ndarray, Tuple[np.ndarray]]
+    label_ids: Optional[Union[np.ndarray, Tuple[np.ndarray]]]
+    metrics: Optional[Dict[str, float]]
+    embeddings: Optional[Union[np.ndarray, Tuple[np.ndarray]]]
+    inputs: Optional[Union[np.ndarray, Tuple[np.ndarray]]]
 
 def skip_instructions(model, predictions_ids, tokenizer, dataset, ignore_idx=-100):
     predictions_ids = np.where(predictions_ids == ignore_idx, tokenizer.pad_token_id, predictions_ids)
@@ -80,16 +88,19 @@ class DenserEvalCallback(TrainerCallback):
         return control
 
 class SaveMetricsCallback(TrainerCallback):
-    def on_evaluate(self, args, state, control, metrics=None, **kwargs):
+    def on_evaluate(self, args, state, control, metrics=None, model = None, trainer = None, trial = None, non_saving_datasets=[], **kwargs):
         # Save metrics after each evaluation
         epoch = state.epoch
-        output_path = os.path.join(args.output_dir, f"metrics_each_epoch.jsonl")
-        if epoch <= 1:
-            with open(output_path, "w") as f:
-                f.write(json.dumps(metrics)+'\n')
-        else:
-            with open(output_path, "a+") as f:
-                f.write(json.dumps(metrics)+'\n')
+        
+        if args.local_rank == 0:
+            output_path = os.path.join(args.output_dir, f"eval_metrics_each_epoch.jsonl")
+            if epoch <= 1:
+                f = open(output_path, "w")
+            else:
+                f = open(output_path, "a+")
+            f.write(json.dumps({'eval':metrics})+'\n')
+            f.close()
+
         return control
 
 class SavePeftModelCallback(TrainerCallback):
@@ -125,25 +136,33 @@ class SaveBestModelsCallback(TrainerCallback):
             if 'eval_F1_for_' not in metric_name:
                 continue
             dataset_name = metric_name.split('eval_F1_for_')[1]
+            task_name = None
+            if '|' in dataset_name:
+                dataset_name, task_name = dataset_name.split('|')
+                assert task_name in ['EE', 'EET', 'EEA', 'RE', 'NER']
             if dataset_name in non_saving_datasets:
                 continue
             
             checkpoint_folder = os.path.join(
-                    args.output_dir, f"best_model_for_{dataset_name}"
+                    args.output_dir, f"best_model_for_{dataset_name}|{task_name}" if task_name is not None else f"best_model_for_{dataset_name}"
             )
-            if not os.path.exists(checkpoint_folder):
+            # Modified: use self.best_metrics to track result due to read/write file in multi processing would cause file sync error 
+            if metric_name not in self.best_metrics:
+                self.best_metrics[metric_name] = 0
+            if args.local_rank == 0 and not os.path.exists(checkpoint_folder):
                 os.mkdir(checkpoint_folder)
                 with open(os.path.join(checkpoint_folder, 'best_metrics.json'), 'w') as f:
                     f.write(json.dumps({metric_name:0})+'\n')
-            with open(os.path.join(checkpoint_folder, 'best_metrics.json'), 'r') as f:
-                previous_metrics = json.loads(f.readline())
             
-            if metric_value > previous_metrics[metric_name]:
-                with open(os.path.join(checkpoint_folder, 'best_metrics.json'), 'w') as f:
-                    f.write(json.dumps({metric_name:metric_value})+'\n')
-                    f.write(json.dumps(metrics)+'\n')
-                trainer._save_checkpoint(model, trial, metrics=None, checkpoint_folder=f"best_model_for_{dataset_name}")
-                print(f"best model for {dataset_name} saved at {checkpoint_folder}")
+            if metric_value > self.best_metrics[metric_name]:
+                self.best_metrics[metric_name] = metric_value
+                if args.local_rank == 0:
+                    with open(os.path.join(checkpoint_folder, 'best_metrics.json'), 'w') as f:
+                        f.write(json.dumps({metric_name:metric_value})+'\n')
+                        f.write(json.dumps(metrics)+'\n')
+                if not args.no_saving:
+                    trainer._save_checkpoint(model, trial, metrics=None, checkpoint_folder=checkpoint_folder)
+                print(f"best model for {dataset_name}|{task_name} saved at {checkpoint_folder}")
         return control
 
 class UIETrainer(Seq2SeqTrainer):
@@ -155,6 +174,7 @@ class UIETrainer(Seq2SeqTrainer):
         data_collator: Optional[DataCollator] = None,
         train_dataset: Optional[Dataset] = None,
         eval_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None,
+        predict_dataset: Optional[Union[Dataset, Dict[str, Dataset]]] = None,
         tokenizer: Optional[PreTrainedTokenizerBase] = None,
         model_init: Optional[Callable[[], PreTrainedModel]] = None,
         compute_metrics: Optional[Callable[[EvalPrediction], Dict]] = None,
@@ -162,6 +182,10 @@ class UIETrainer(Seq2SeqTrainer):
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
         preprocess_logits_for_metrics: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
         non_saving_datasets = [],
+        max_new_tokens=50,
+        num_beams=1,
+        repetition_penalty=1.0,
+        pad_token_id=None,
     ):
         super().__init__(model, args, data_collator, train_dataset, eval_dataset, tokenizer, model_init, compute_metrics, callbacks, optimizers, preprocess_logits_for_metrics)
         
@@ -175,6 +199,13 @@ class UIETrainer(Seq2SeqTrainer):
         
         self.non_saving_datasets = non_saving_datasets
         print('init self.args.should_save',self.args.should_save)
+
+        #init params for predictions
+        self.predict_dataset = predict_dataset
+        self.max_new_tokens = max_new_tokens
+        self.num_beams = num_beams
+        self.repetition_penalty = repetition_penalty
+        self.pad_token_id = pad_token_id
 
     # Rewrite the evaluation function, with customized call of evaluate, passing the trainer and trial object so that we can modify the save process.
     def _maybe_log_save_evaluate(self, tr_loss, model, trial, epoch, ignore_keys_for_eval):
@@ -213,6 +244,30 @@ class UIETrainer(Seq2SeqTrainer):
             else:
                 # Rewrite: Modified evaluate by passing additional trial param
                 metrics = self.evaluate(ignore_keys=ignore_keys_for_eval, trial=trial)
+            
+            if self.args.test_with_eval:
+                predict_results = self.predict(
+                    self.predict_dataset,
+                    metric_key_prefix="predict",
+                    max_new_tokens=self.max_new_tokens,
+                    num_beams=self.num_beams,
+                    repetition_penalty=self.repetition_penalty,
+                    pad_token_id=self.pad_token_id
+                )
+                metrics.update(predict_results.metrics)
+
+                if self.args.local_rank == 0:
+                    predict_metrics = predict_results.metrics
+                    output_path = os.path.join(self.args.output_dir, f"test_metrics_each_epoch.jsonl")
+                    predict_metrics['epoch'] = epoch
+                    if epoch <= 1:
+                        f = open(output_path, "w")
+                    else:
+                        f = open(output_path, "a+")
+                    self.log_metrics("predict", predict_metrics)
+                    f.write(json.dumps({'test':predict_metrics})+'\n')
+                    f.close()
+                
             self._report_to_hp_search(trial, self.state.global_step, metrics)
 
             # Run delayed LR scheduler now that metrics are populated
@@ -223,7 +278,8 @@ class UIETrainer(Seq2SeqTrainer):
                 self.lr_scheduler.step(metrics[metric_to_check])
 
         if self.control.should_save:
-            self._save_checkpoint(model, trial, metrics=metrics)
+            if not self.args.no_saving:
+                self._save_checkpoint(model, trial, metrics=metrics)
             self.control = self.callback_handler.on_save(self.args, self.state, self.control)
 
     # modified by huzikun, rewrite the evaluate function, with customized call of on_evaluate, passing the trainer and trial object so that we can modify the save process.
@@ -383,12 +439,14 @@ class UIETrainer(Seq2SeqTrainer):
         preds_host = None
         labels_host = None
         inputs_host = None
+        embeddings_host = None
 
         # losses/preds/labels on CPU (final containers)
         all_losses = None
         all_preds = None
         all_labels = None
         all_inputs = None
+        all_embeddings = None
         # Will be useful when we have an iterable dataset so don't know its length.
 
         observed_num_examples = 0
@@ -401,9 +459,12 @@ class UIETrainer(Seq2SeqTrainer):
                 # For batch samplers, batch_size is not known by the dataloader in advance.
                 if batch_size is None:
                     batch_size = observed_batch_size
-
+            embeddings = None
             # Prediction step
-            loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
+            if self.args.embedding_type is not None:
+                loss, logits, labels, embeddings = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
+            else:
+                loss, logits, labels = self.prediction_step(model, inputs, prediction_loss_only, ignore_keys=ignore_keys)
             inputs_decode = self._prepare_input(inputs["input_ids"]) if args.include_inputs_for_metrics else None
 
             if is_torch_tpu_available():
@@ -432,6 +493,9 @@ class UIETrainer(Seq2SeqTrainer):
             if labels is not None:
                 labels = self._nested_gather(labels)
                 labels_host = labels if labels_host is None else nested_concat(labels_host, labels, padding_index=-100)
+            if embeddings is not None:
+                embeddings = self._nested_gather(embeddings)
+                embeddings_host = embeddings if embeddings_host is None else torch.cat((embeddings_host, embeddings), dim=0)
             self.control = self.callback_handler.on_prediction_step(args, self.state, self.control)
 
             # Gather all tensors and put them back on the CPU if we have done enough accumulation steps.
@@ -454,9 +518,11 @@ class UIETrainer(Seq2SeqTrainer):
                     all_labels = (
                         labels if all_labels is None else nested_concat(all_labels, labels, padding_index=-100)
                     )
-
+                if embeddings_host is not None:
+                    embeddings = nested_numpify(embeddings_host)
+                    all_embeddings = (embeddings if all_embeddings is None else np.concatenate((all_embeddings, embeddings), axis=0))
                 # Set back to None to begin a new accumulation
-                losses_host, preds_host, inputs_host, labels_host = None, None, None, None
+                losses_host, preds_host, inputs_host, labels_host, embeddings_host = None, None, None, None, None
 
         if args.past_index and hasattr(self, "_past"):
             # Clean the state at the end of the evaluation loop
@@ -477,7 +543,9 @@ class UIETrainer(Seq2SeqTrainer):
         if labels_host is not None:
             labels = nested_numpify(labels_host)
             all_labels = labels if all_labels is None else nested_concat(all_labels, labels, padding_index=-100)
-
+        if embeddings_host is not None:
+            embeddings = nested_numpify(embeddings_host)
+            all_embeddings = (embeddings if all_embeddings is None else np.concatenate((all_embeddings, embeddings), axis=0))
         # Number of samples
         if has_length(eval_dataset):
             num_samples = len(eval_dataset)
@@ -503,6 +571,8 @@ class UIETrainer(Seq2SeqTrainer):
             all_labels = nested_truncate(all_labels, num_samples)
         if all_inputs is not None:
             all_inputs = nested_truncate(all_inputs, num_samples)
+        if all_embeddings is not None:
+            all_embeddings = all_embeddings[:num_samples]
 
         # Metrics!
         if self.compute_metrics is not None and all_preds is not None and all_labels is not None:
@@ -522,8 +592,10 @@ class UIETrainer(Seq2SeqTrainer):
         for key in list(metrics.keys()):
             if not key.startswith(f"{metric_key_prefix}_"):
                 metrics[f"{metric_key_prefix}_{key}"] = metrics.pop(key)
-
-        return EvalLoopOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics, num_samples=num_samples)
+        if self.args.embedding_type is not None:
+            return EvalLoopOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics, num_samples=num_samples), all_embeddings, all_inputs
+        else:
+            return EvalLoopOutput(predictions=all_preds, label_ids=all_labels, metrics=metrics, num_samples=num_samples)
 
     def prediction_step(
         self,
@@ -553,14 +625,15 @@ class UIETrainer(Seq2SeqTrainer):
             labels (each being optional).
         """
 
-        if not self.args.predict_with_generate or prediction_loss_only:
+        if (not self.args.predict_with_generate or prediction_loss_only) and (not self.args.embedding_type):
             return super().prediction_step(
                 model, inputs, prediction_loss_only=prediction_loss_only, ignore_keys=ignore_keys
             )
 
         has_labels = "labels" in inputs
         inputs = self._prepare_inputs(inputs)
-
+        if self.args.embedding_type is not None:
+            inputs["output_hidden_states"] = True
         # XXX: adapt synced_gpus for fairscale as well
         gen_kwargs = self._gen_kwargs
         gen_kwargs["synced_gpus"] = True if is_deepspeed_zero3_enabled() else False
@@ -601,7 +674,31 @@ class UIETrainer(Seq2SeqTrainer):
         with torch.no_grad():
             if has_labels:
                 with self.autocast_smart_context_manager():
+                    #need to be deleted
+                    tasks = inputs.pop('task')
+                    datasets = inputs.pop('dataset')
+
                     outputs = model(**inputs)
+                    if self.args.embedding_type is not None:
+                        encoder_last_h = outputs["encoder_last_hidden_state"]
+                        decoder_last_h = outputs["decoder_hidden_states"][-1]
+                        embeddings = self._get_embedding(encoder_last_h, decoder_last_h)
+                    
+                    #need to be deleted
+                    decoded_strings = self.tokenizer.batch_decode(inputs['input_ids'])
+                    embeddings_np = embeddings.cpu().numpy()
+                    tosave = []
+                    for i, decoded_string in enumerate(decoded_strings):
+                        tosave.append({'decoded':decoded_string, 'embedding':embeddings_np[i][:10].tolist(), 'task':tasks[i], 'dataset':datasets[i]})
+                    output_path = os.path.join(self.args.output_dir, f"test_embeddings.jsonl")
+                    if not os.path.exists(output_path):
+                        f = open(output_path, "w")
+                    else:
+                        f = open(output_path, "a+")
+                    for item in tosave:
+                        f.write(json.dumps(item)+'\n')
+                    f.close()
+                                    
                 if self.label_smoother is not None:
                     loss = self.label_smoother(outputs, inputs["labels"]).mean().detach()
                 else:
@@ -618,9 +715,20 @@ class UIETrainer(Seq2SeqTrainer):
                 labels = self._pad_tensors_to_max_len(labels, gen_kwargs["max_new_tokens"])
         else:
             labels = None
-
+        if self.args.embedding_type is not None:
+            return (loss, generated_tokens, labels, embeddings)
         return (loss, generated_tokens, labels)
-    
+    def _get_embedding(self, encoder_last_h, decoder_last_h):
+        if self.args.embedding_type == 'mean_of_encoder':
+            embedding = encoder_last_h.mean(dim=1)
+        elif self.args.embedding_type == 'first_of_decoder':
+            embedding = decoder_last_h[:, 0, :]
+        elif self.args.embedding_type == 'last_of_decoder':
+            #considering the padding token
+            raise NotImplementedError('last_of_decoder is not implemented yet')
+        else:
+            raise NotImplementedError('embedding_type {} is not implemented yet, please choose from [mean_of_encoder, first_of_decoder, last_of_decoder]'.format(self.args.embedding_type))
+        return embedding
     # modified by huzikun, rewrite the _save_checkpoint function, with customizable checkpoint folder name
     def _save_checkpoint(self, model, trial, metrics=None, checkpoint_folder=None):
         # In all cases, including ddp/dp/deepspeed, self.model is always a reference to the model we
@@ -742,9 +850,9 @@ class UIETrainer(Seq2SeqTrainer):
             if self.args.push_to_hub:
                 self._push_from_checkpoint(output_dir)
 
-            # Maybe delete some older checkpoints.
-            if self.args.should_save:
-                self._rotate_checkpoints(use_mtime=True, output_dir=run_dir)
+        # Maybe delete some older checkpoints.
+        if self.args.should_save:
+            self._rotate_checkpoints(use_mtime=True, output_dir=run_dir)
 
         # Modified: Save lora weights on deepspeed zero3. This part must process after original code to override the empty adapter_model.bin due to incompatible between zero3 and peft
         if self.args.use_lora and self.is_deepspeed_enabled and is_deepspeed_zero3_enabled():
@@ -757,3 +865,84 @@ class UIETrainer(Seq2SeqTrainer):
             if self.args.local_rank == 0:
                 torch.save(lora_state_dict, os.path.join(output_dir, "adapter_model.bin"))
                 print(f"Save adapter model at {output_dir}")
+    #modified by huzikun, make it able to return the embeddings
+    def predict(
+        self,
+        test_dataset: Dataset,
+        ignore_keys: Optional[List[str]] = None,
+        metric_key_prefix: str = "test",
+        **gen_kwargs,
+    ):
+        """
+        Run prediction and returns predictions and potential metrics.
+
+        Depending on the dataset and your use case, your test dataset may contain labels. In that case, this method
+        will also return metrics, like in `evaluate()`.
+
+        Args:
+            test_dataset (`Dataset`):
+                Dataset to run the predictions on. If it is an `datasets.Dataset`, columns not accepted by the
+                `model.forward()` method are automatically removed. Has to implement the method `__len__`
+            ignore_keys (`List[str]`, *optional*):
+                A list of keys in the output of your model (if it is a dictionary) that should be ignored when
+                gathering predictions.
+            metric_key_prefix (`str`, *optional*, defaults to `"test"`):
+                An optional prefix to be used as the metrics key prefix. For example the metrics "bleu" will be named
+                "test_bleu" if the prefix is "test" (default)
+
+        <Tip>
+
+        If your predictions or labels have different sequence length (for instance because you're doing dynamic padding
+        in a token classification task) the predictions will be padded (on the right) to allow for concatenation into
+        one array. The padding index is -100.
+
+        </Tip>
+
+        Returns: *NamedTuple* A namedtuple with the following keys:
+
+            - predictions (`np.ndarray`): The predictions on `test_dataset`.
+            - label_ids (`np.ndarray`, *optional*): The labels (if the dataset contained some).
+            - metrics (`Dict[str, float]`, *optional*): The potential dictionary of metrics (if the dataset contained
+              labels).
+        """
+        # memory metrics - must set up as early as possible
+        gen_kwargs = gen_kwargs.copy()
+        if gen_kwargs.get("max_length") is None and gen_kwargs.get("max_new_tokens") is None:
+            gen_kwargs["max_length"] = self.args.generation_max_length
+        gen_kwargs["num_beams"] = (
+            gen_kwargs["num_beams"] if gen_kwargs.get("num_beams") is not None else self.args.generation_num_beams
+        )
+        self._gen_kwargs = gen_kwargs
+        
+        self._memory_tracker.start()
+
+        test_dataloader = self.get_test_dataloader(test_dataset)
+        start_time = time.time()
+
+        eval_loop = self.prediction_loop if self.args.use_legacy_prediction_loop else self.evaluation_loop
+        if self.args.embedding_type is not None:
+            output, all_embeddings, all_inputs = eval_loop(
+                test_dataloader, description="Prediction", ignore_keys=ignore_keys, metric_key_prefix=metric_key_prefix
+            )
+        else:
+            output = eval_loop(
+                test_dataloader, description="Prediction", ignore_keys=ignore_keys, metric_key_prefix=metric_key_prefix
+            )
+        total_batch_size = self.args.eval_batch_size * self.args.world_size
+        if f"{metric_key_prefix}_jit_compilation_time" in output.metrics:
+            start_time += output.metrics[f"{metric_key_prefix}_jit_compilation_time"]
+        output.metrics.update(
+            speed_metrics(
+                metric_key_prefix,
+                start_time,
+                num_samples=output.num_samples,
+                num_steps=math.ceil(output.num_samples / total_batch_size),
+            )
+        )
+
+        self.control = self.callback_handler.on_predict(self.args, self.state, self.control, output.metrics)
+        self._memory_tracker.stop_and_update_metrics(output.metrics)
+        if self.args.embedding_type is not None:
+            return UIEPredictionOutput(predictions=output.predictions, label_ids=output.label_ids, metrics=output.metrics, embeddings=all_embeddings, inputs=all_inputs)
+        else:
+            return PredictionOutput(predictions=output.predictions, label_ids=output.label_ids, metrics=output.metrics)

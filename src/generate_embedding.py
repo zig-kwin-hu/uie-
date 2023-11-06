@@ -24,6 +24,7 @@ import sys
 import json
 from dataclasses import dataclass, field
 from typing import Optional, List
+import random
 
 import datasets
 import nltk  # Here to have a nice missing dependency error message early on
@@ -302,6 +303,10 @@ class DataTrainingArguments:
         default=True,
         metadata={"help": "Whether to sort prompt options in instruction."}
     )
+    embedding_prompt: Optional[str] = field(
+        default=None,
+        metadata={"help": "which prompt to use to collect the embedding of the input."}
+    )
     
 
 
@@ -405,6 +410,9 @@ def main():
 
     # Set seed before initializing model.
     set_seed(training_args.seed)
+    random.seed(training_args.seed)
+    np.random.seed(training_args.seed)
+
     data_cache_dir = gen_cache_path(training_args.output_dir, data_args)
 
     training_args.save_lora_weights_only = False if not model_args.lora_target_modules else training_args.save_lora_weights_only
@@ -415,9 +423,9 @@ def main():
     if model_args.lora_moe_paths:
         model_args.lora_moe_paths = model_args.lora_moe_paths.split(',')
 
-    # Get the UIE dataset
+    print("loading dataset")
     raw_datasets = load_dataset(
-        os.path.join(CURRENT_DIR, "uie_dataset.py"),
+        os.path.join(CURRENT_DIR, "only_instruction_dataset.py"),
         data_dir=data_args.data_dir,
         task_config_dir=data_args.task_config_dir,
         instruction_file=data_args.instruction_file,
@@ -429,9 +437,11 @@ def main():
         num_examples=data_args.num_examples,
         over_sampling=data_args.over_sampling,
         min_negative_labels=data_args.min_negative_labels,
-        min_positive_labels=data_args.min_positive_labels
+        min_positive_labels=data_args.min_positive_labels,
+        embedding_prompt=data_args.embedding_prompt,
     )
     raw_datasets.cleanup_cache_files()
+    print("dataset loaded")
     print(data_cache_dir)
     
     # Load pretrained model and tokenizer
@@ -618,6 +628,7 @@ def main():
 
     # Data collator
     label_pad_token_id = -100 if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id
+    print('data collator')
     data_collator = DataCollatorForUIE(
         tokenizer,
         model=model,
@@ -722,7 +733,7 @@ def main():
         predict_dataset = predict_dataset if training_args.do_predict else None,
         tokenizer=tokenizer,
         data_collator=data_collator,
-        compute_metrics=compute_f1_metrics,
+        compute_metrics=compute_f1_metrics if training_args.embedding_type is None else None,
         callbacks=callbacks,
         max_new_tokens=max_new_tokens,
         num_beams=num_beams,
@@ -826,7 +837,7 @@ def main():
                     eval_dataset=eval_dataset if training_args.do_eval else None,
                     tokenizer=tokenizer,
                     data_collator=data_collator,
-                    compute_metrics=compute_f1_metrics,
+                    compute_metrics=compute_f1_metrics if training_args.embedding_type is None else None,
                     callbacks=callbacks,
                     max_new_tokens=max_new_tokens,
                     num_beams=num_beams,
@@ -874,7 +885,12 @@ def main():
             trainer.log_metrics("predict", metrics)
             trainer.save_metrics("predict", metrics)
             all_metrics.update(metrics)
-
+            inputs = predict_results.inputs
+            #save embeddings in numpy format
+            if training_args.embedding_type is not None:
+                embeddings = predict_results.embeddings
+                np.save(os.path.join(training_args.output_dir, 'embeddings.npy'), embeddings)
+                
             if training_args.test_with_eval:
                 predict_results = trainer.predict(
                     eval_dataset,

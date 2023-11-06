@@ -4,5 +4,7 @@
     "prompt_no_option": "{instruction} \nText: {text} \nAnswer:",
     "prompt_no_text": "{instruction}",
     "prompt_w_explain": "{instruction} \nText: {text} \nExplain: {explain}\nAnswer:",
+    "prompt_gen_embedding_iop": "{instruction} Option: {options} . The whole instruction can be summarized in a single word \"",
+    "prompt_gen_embedding_io": "{instruction} Option: {options}",
     "response_split": "Answer:"    
 }

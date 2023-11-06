@@ -12,29 +12,26 @@ port=$(shuf -i25000-30000 -n1)
 model_name_or_path=ZWK/InstructUIE
 
 
-for TASK_CONFIG in ADE_NYT11
+for TASK_CONFIG in EMBED_INSTRUCTION
 do
-    CUDA_VISIBLE_DEVICES=0,1,2,3 python src/run_uie.py \
-    --do_train \
+    CUDA_VISIBLE_DEVICES=0,1,2,3 python src/generate_embedding.py \
     --do_predict \
-    --do_eval \
-    --predict_with_generate \
     --model_name_or_path ${model_name_or_path} \
     --data_dir ./data/ie_instruct \
-    --task_config_dir ./configs/re_configs/${TASK_CONFIG} \
+    --task_config_dir ./configs/embed_configs/${TASK_CONFIG} \
     --instruction_file ./configs/instruction_config.json \
     --prompt_file ./prompts/instructUIE.json \
-    --instruction_strategy multiple \
+    --instruction_strategy single \
     --min_negative_labels -1 \
     --min_positive_labels -1 \
-    --output_dir ./output/${TASK_CONFIG}/iuie\
+    --output_dir ./output/${TASK_CONFIG}/iuie_mean_of_encoder\
     --input_record_file iuie.record \
     --per_device_train_batch_size 8 \
     --per_device_eval_batch_size 8 \
     --gradient_accumulation_steps 32 \
     --learning_rate 5e-05 \
-    --num_train_epochs ${epoch_map[${TASK_CONFIG}]} \
-    --run_name ${model_name_or_path}-RE-${TASK_CONFIG} \
+    --num_train_epochs 0 \
+    --run_name ${model_name_or_path}-EMBED-${TASK_CONFIG} \
     --max_source_length 512 \
     --max_target_length 50 \
     --generation_max_length 50 \
@@ -55,15 +52,19 @@ do
     --ddp_find_unused_parameters False \
     --save_total_limit 1 \
     --over_sampling False \
-    --load_best_model_at_end True\
+    --load_best_model_at_end False\
     --metric_for_best_model eval_f1 \
     --only_save_best_model True \
-    --lora_target_modules q,v \
-    --lora_r 16 \
-    --test_with_eval \
-    --save_lora_weights_only \
     --predict_each_dataset_with_best False \
+    --overwrite_cache \
+    --embedding_prompt io \
+    --embedding_type mean_of_encoder \
+    --predict_with_generate \
+    --overwrite_cache \
+    #--lora_target_modules q,v \
+    #--lora_r 16 \
+    #--test_with_eval \
+    #--save_lora_weights_only \
     #--overwrite_output_dir \
-
 done
 

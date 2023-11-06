@@ -1,0 +1,8 @@
+{
+    "EMBED_INSTRUCTION": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "no_sentence"
+        }
+    ]
+}
