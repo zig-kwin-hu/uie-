@@ -1,0 +1,12 @@
+{
+    "RE": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "ADE_corpus"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "GIDS"
+        }
+    ]
+}

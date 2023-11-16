@@ -1,0 +1,20 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "bc4chemd"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "AnatEM"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "bc2gm"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "ncbi"
+        }
+    ]
+}

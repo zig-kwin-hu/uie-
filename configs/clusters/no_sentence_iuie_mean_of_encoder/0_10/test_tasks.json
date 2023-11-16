@@ -1,0 +1,12 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "mit-restaurant"
+        },
+        {
+            "sampling strategy": "full",
+            "dataset name": "mit-movie"
+        }
+    ]
+}

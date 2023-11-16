@@ -1,0 +1,12 @@
+{
+    "EET": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "CASIE"
+        },
+        {
+            "sampling strategy": "full",
+            "dataset name": "PHEE"
+        }
+    ]
+}

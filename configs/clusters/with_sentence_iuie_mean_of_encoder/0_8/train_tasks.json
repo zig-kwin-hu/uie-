@@ -1,0 +1,16 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "GENIA_NER"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "FindVehicle"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "FabNER"
+        }
+    ]
+}

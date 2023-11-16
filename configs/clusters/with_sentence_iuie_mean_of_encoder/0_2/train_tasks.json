@@ -1,0 +1,24 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "CrossNER_AI"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "CrossNER_politics"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "CrossNER_literature"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "CrossNER_science"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "CrossNER_music"
+        }
+    ]
+}

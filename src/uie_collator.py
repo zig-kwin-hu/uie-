@@ -129,11 +129,13 @@ class DataCollatorForUIE:
                 model_inputs["decoder_input_ids"] = decoder_input_ids
 
             self._save_samples(model_inputs, sources, labels)
+        '''
         model_inputs['task'] = []
         model_inputs['dataset'] = []
         for i, instance in enumerate(batch):
             model_inputs['task'].append(instance['Instance']['task'])
             model_inputs['dataset'].append(instance['Instance']['dataset'])
+        '''
         return model_inputs
 
     def decoder_call(self, batch, return_tensors):

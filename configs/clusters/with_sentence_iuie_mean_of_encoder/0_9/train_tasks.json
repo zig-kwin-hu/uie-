@@ -1,0 +1,12 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "HarveyNER"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "Ontonotes"
+        }
+    ]
+}

@@ -1,0 +1,24 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "Broad Tweet Corpus"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "WikiNeural"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "CoNLL 2003"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "WikiANN en"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "PolyglotNER"
+        }
+    ]
+}

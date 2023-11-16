@@ -1,0 +1,16 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "GENIA_NER"
+        },
+        {
+            "sampling strategy": "full",
+            "dataset name": "FindVehicle"
+        },
+        {
+            "sampling strategy": "full",
+            "dataset name": "FabNER"
+        }
+    ]
+}

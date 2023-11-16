@@ -1,0 +1,12 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "TweetNER7"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "CrossNER_politics"
+        }
+    ]
+}

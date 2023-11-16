@@ -1,0 +1,12 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "CrossNER_science"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "MultiNERD"
+        }
+    ]
+}

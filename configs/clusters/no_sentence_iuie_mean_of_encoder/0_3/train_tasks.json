@@ -1,0 +1,12 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "bc5cdr"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "ncbi"
+        }
+    ]
+}

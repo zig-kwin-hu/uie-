@@ -1,11 +1,11 @@
 #!/bin/bash
 declare -A epoch_map
-epoch_map=([semval-RE]=10 [NYT11]=10 [SciERC]=20 [NYT11_semval-RE]=20 [NYT11_SciERC]=20 [ADE_corpus-1500]=25 [ADE_NYT11]=25 [ADE_SciERC]=25 [ADE_semval-RE]=25 [semval-RE_SciERC]=20 [SciERC_NYT11]=20 [SciERC_ADE]=25 [4combined]=20 [semval-RE_ADE]=25 [semval-RE_NYT11]=20 [SciERC_semval-RE]=20)
+epoch_map=([with_sentence_iuie_mean_of_encoder]=30 [NYT11_NYT]=10 [semval-RE]=10 [NYT11]=10 [SciERC]=20 [NYT11_semval-RE]=20 [NYT11_SciERC]=20 [ADE_corpus-1500]=25 [ADE_NYT11]=25 [ADE_SciERC]=25 [ADE_semval-RE]=25 [semval-RE_SciERC]=20 [SciERC_NYT11]=20 [SciERC_ADE]=25 [4combined]=20 [semval-RE_ADE]=25 [semval-RE_NYT11]=20 [SciERC_semval-RE]=20)
 
 # declare -A TASK2DATASETS=([re]="conll04 SciERC NYT11 semval-RE ADE_corpus-1500" [eet]="ace phee casie" [eea]="ace phee casie" [ner]="CoNLL_2003 ACE_2004 ACE_2005")
 # DONE : [ner] = ACE_2004 ACE_2005 AnatEM bc2gm bc4chemd bc5cdr Broad_Tweet_Corpus CoNLL_2003 FabNER FindVehicle GENIA_NER HarveyNER mit-movie mit-restaurant MultiNERD ncbi Ontonotes_sample_30000 PolyglotNER TweetNER7_sample_15000 WikiANN_en WikiNeural
 #declare -A TASK2DATASETS=([re]="ADE_corpus NYT11_sample_30000 New-York-Times-RE_sample_30000 semval-RE conll04 GIDS SciERC kbp37" [eet]="ace phee casie" [eea]="ace phee casie" [ner]="ACE_2004 ACE_2005 AnatEM bc2gm bc4chemd bc5cdr Broad_Tweet_Corpus CoNLL_2003 FabNER FindVehicle GENIA_NER HarveyNER mit-movie mit-restaurant MultiNERD ncbi Ontonotes_sample_30000 PolyglotNER TweetNER7 WikiANN_en WikiNeural")
-declare -A TASK2DATASETS=([re]="SciERC" [eet]="ace phee casie" [eea]="ace phee casie" [ner]="ACE_2004 ACE_2005 AnatEM bc2gm bc4chemd bc5cdr Broad_Tweet_Corpus CoNLL_2003 FabNER FindVehicle GENIA_NER HarveyNER mit-movie mit-restaurant MultiNERD ncbi Ontonotes_sample_30000 PolyglotNER TweetNER7 WikiANN_en WikiNeural")
+declare -A TASK2DATASETS=([with_sentence_iuie_mean_of_encoder]="0_2" [ner_cluster]="ACE_2004_ACE_2005" [re_cluster]="NYT11_NYT" [eet]="ace phee casie" [eea]="ace phee casie" [ner]="ACE_2004 ACE_2005 AnatEM bc2gm bc4chemd bc5cdr Broad_Tweet_Corpus CoNLL_2003 FabNER FindVehicle GENIA_NER HarveyNER mit-movie mit-restaurant MultiNERD ncbi Ontonotes_sample_30000 PolyglotNER TweetNER7 WikiANN_en WikiNeural")
 
 set -x
 
@@ -18,7 +18,7 @@ model_name_or_path=ZWK/InstructUIE
 # model_name_or_path=google/flan-t5-xxl
 
 # for TASK in re ner eet eea 
-for TASK_CONFIG in re
+for TASK_CONFIG in with_sentence_iuie_mean_of_encoder
 do
     for DATASET_CONFIG in ${TASK2DATASETS[${TASK_CONFIG}]}
     do
@@ -26,21 +26,21 @@ do
         --do_train \
         --do_eval \
         --do_predict \
-        --deepspeed ./configs/ds_configs/stage0.config \
+        --deepspeed ./configs/ds_configs/ds_flan_t5_z3_offload_bf16.json \
         --predict_with_generate \
         --model_name_or_path ${model_name_or_path} \
         --data_dir ./data/ie_instruct \
-        --task_config_dir ./configs/${TASK_CONFIG}_configs/${DATASET_CONFIG} \
+        --task_config_dir ./configs/clusters/${TASK_CONFIG}/${DATASET_CONFIG} \
         --instruction_file ./configs/instruction_config.json \
         --prompt_file ./prompts/instructUIE.json \
         --instruction_strategy multiple \
         --min_negative_labels -1 \
         --min_positive_labels -1 \
-        --output_dir .output/${TASK_CONFIG}_lora_test/${DATASET_CONFIG}/iuie-xxl \
+        --output_dir output/${TASK_CONFIG}_lora/${DATASET_CONFIG}/iuie-xxl \
         --input_record_file iuie.record \
-        --per_device_train_batch_size 8 \
-        --per_device_eval_batch_size 8 \
-        --gradient_accumulation_steps 8 \
+        --per_device_train_batch_size 3 \
+        --per_device_eval_batch_size 3 \
+        --gradient_accumulation_steps 12 \
         --learning_rate 5e-05 \
         --num_train_epochs 10 \
         --run_name ${model_name_or_path}-${TASK_CONFIG}-${DATASET_CONFIG} \
@@ -57,11 +57,9 @@ do
         --warmup_step 0 \
         --logging_strategy steps \
         --logging_steps 10 \
-        --evaluation_strategy epoch \
-        --save_strategy epoch \
         --cache_dir ./huggingface \
         --ddp_find_unused_parameters False \
-        --save_total_limit 1 \
+        --save_total_limit 10 \
         --over_sampling False \
         --bf16 \
         --load_best_model_at_end False \
@@ -69,9 +67,17 @@ do
         --only_save_best_model True \
         --lora_target_modules q,v \
         --lora_r 16 \
-        --test_with_eval \
+        --use_test_as_eval \
         --save_lora_weights_only \
         --predict_each_dataset_with_best False \
+        --save_strategy steps \
+        --save_steps 15 \
+        --evaluation_strategy steps \
+        --eval_steps 15 \
+        --group_by_length \
+        --resume_from_checkpoint /storage/zkhu/InstructUIE/output/with_sentence_iuie_mean_of_encoder_lora/0_2/iuie-xxl/checkpoint-30 \
+        #--evaluation_strategy epoch \
+        #--save_strategy epoch \
         #--overwrite_output_dir \
     done
 done

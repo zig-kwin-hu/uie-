@@ -1,0 +1,12 @@
+{
+	"RE":[
+		{
+	        "sampling strategy": "full",
+		    "dataset name": "NYT11_sample_30000"
+		},
+		{
+	        "sampling strategy": "full",
+		    "dataset name": "New-York-Times-RE_sample_30000"
+		}
+	]
+}

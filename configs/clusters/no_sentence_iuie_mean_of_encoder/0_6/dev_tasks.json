@@ -1,0 +1,16 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "bc4chemd"
+        },
+        {
+            "sampling strategy": "full",
+            "dataset name": "AnatEM"
+        },
+        {
+            "sampling strategy": "full",
+            "dataset name": "bc2gm"
+        }
+    ]
+}

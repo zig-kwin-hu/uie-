@@ -1,0 +1,12 @@
+{
+    "RE": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "NYT11"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "New-York-Times-RE"
+        }
+    ]
+}

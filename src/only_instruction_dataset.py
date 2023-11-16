@@ -299,6 +299,8 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 prompt = self.config.prompt['prompt_gen_embedding_iop'].format(instruction=instruction, options=labels_str)
             elif self.config.embedding_prompt == 'io':
                 prompt = self.config.prompt['prompt_gen_embedding_io'].format(instruction=instruction, options=labels_str)
+            elif self.config.embedding_prompt == 'iota':
+                prompt = self.config.prompt['prompt_gen_embedding_iota'].format(instruction=instruction, options=labels_str, text='{0}')
             else:
                 raise ValueError("Invalid embedding prompt type {}, please check your config file {}"
                                  .format(self.config.embedding_prompt, self.config.prompt_file))

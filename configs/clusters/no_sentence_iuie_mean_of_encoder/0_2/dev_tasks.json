@@ -1,0 +1,16 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "CrossNER_AI"
+        },
+        {
+            "sampling strategy": "full",
+            "dataset name": "CrossNER_literature"
+        },
+        {
+            "sampling strategy": "full",
+            "dataset name": "CrossNER_music"
+        }
+    ]
+}

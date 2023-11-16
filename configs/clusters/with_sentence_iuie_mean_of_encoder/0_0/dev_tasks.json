@@ -1,0 +1,12 @@
+{
+    "NER": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "ACE 2004"
+        },
+        {
+            "sampling strategy": "full",
+            "dataset name": "ACE 2005"
+        }
+    ]
+}

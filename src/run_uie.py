@@ -340,6 +340,10 @@ class UIETrainingArguments(Seq2SeqTrainingArguments):
         default = False,
         metadata = {"help": "If true, when evaluation, do test as well."}
     )
+    use_test_as_eval: Optional[bool] = field(
+        default = False,
+        metadata = {"help": "If true, when evaluation, do test set as the eval."}
+    )
     use_lora: Optional[bool] = field(
         default=False,
         metadata={"help": "Define lora training. Auto set to True if lora_target_modules is defined, else False."}
@@ -351,6 +355,10 @@ class UIETrainingArguments(Seq2SeqTrainingArguments):
     embedding_type: Optional[str] = field(
         default=None,
         metadata={"help": "how to collect the embedding of the input."},
+    )
+    no_resume_training: Optional[bool] = field(
+        default=False,
+        metadata={"help": "If true, do not resume training from checkpoint."},
     )
 
 
@@ -429,7 +437,9 @@ def main():
         num_examples=data_args.num_examples,
         over_sampling=data_args.over_sampling,
         min_negative_labels=data_args.min_negative_labels,
-        min_positive_labels=data_args.min_positive_labels
+        min_positive_labels=data_args.min_positive_labels,
+        model_name_or_path=model_args.model_name_or_path,
+        model_cache_dir=model_args.cache_dir,
     )
     raw_datasets.cleanup_cache_files()
     print(data_cache_dir)
@@ -615,7 +625,8 @@ def main():
         predict_dataset = raw_datasets["test"]
         if data_args.max_predict_samples is not None:
             predict_dataset = predict_dataset.select(range(data_args.max_predict_samples))
-
+    if training_args.use_test_as_eval:
+        eval_dataset = predict_dataset
     # Data collator
     label_pad_token_id = -100 if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id
     data_collator = DataCollatorForUIE(
@@ -633,6 +644,7 @@ def main():
         input_record_file=data_args.input_record_file,
         return_loss_mask=not 'llama' in model_args.model_name_or_path.lower()
     )
+    
     # we don't want to remove unused columns because we will prepare each batch during training,
     # and some of the information will also be used in evaluation.
     training_args.remove_unused_columns = False
@@ -763,8 +775,10 @@ def main():
             #trainer.args.num_train_epochs = training_args.num_train_epochs - trained_epoch_num
             #print('left num_train_epochs: ', trainer.args.num_train_epochs)
         print('resume_from_checkpoint: ', training_args.resume_from_checkpoint)
-        
-        train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        if not training_args.use_lora and not training_args.no_resume_training:
+            train_result = trainer.train(resume_from_checkpoint=checkpoint)
+        else:
+            train_result = trainer.train()
         if not training_args.no_saving:
             trainer.save_model()  # Saves the tokenizer too for easy upload
 

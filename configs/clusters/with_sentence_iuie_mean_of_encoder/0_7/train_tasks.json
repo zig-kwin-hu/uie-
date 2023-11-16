@@ -1,0 +1,28 @@
+{
+    "RE": [
+        {
+            "sampling strategy": "random",
+            "dataset name": "SciERC"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "ADE_corpus"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "GIDS"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "conll04"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "semval-RE"
+        },
+        {
+            "sampling strategy": "random",
+            "dataset name": "kbp37"
+        }
+    ]
+}

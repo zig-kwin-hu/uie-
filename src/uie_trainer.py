@@ -93,8 +93,11 @@ class SaveMetricsCallback(TrainerCallback):
         epoch = state.epoch
         
         if args.local_rank == 0:
-            output_path = os.path.join(args.output_dir, f"eval_metrics_each_epoch.jsonl")
-            if epoch <= 1:
+            if args.use_test_as_eval:
+                output_path = os.path.join(args.output_dir, f"eval_metrics_each_epoch_use_test_as_eval.jsonl")
+            else:
+                output_path = os.path.join(args.output_dir, f"eval_metrics_each_epoch.jsonl")
+            if epoch <= 1 and args.evaluation_strategy == IntervalStrategy.EPOCH:
                 f = open(output_path, "w")
             else:
                 f = open(output_path, "a+")
@@ -142,9 +145,9 @@ class SaveBestModelsCallback(TrainerCallback):
                 assert task_name in ['EE', 'EET', 'EEA', 'RE', 'NER']
             if dataset_name in non_saving_datasets:
                 continue
-            
+            folder_name = f"best_model_for_{dataset_name}|{task_name}" if task_name is not None else f"best_model_for_{dataset_name}"
             checkpoint_folder = os.path.join(
-                    args.output_dir, f"best_model_for_{dataset_name}|{task_name}" if task_name is not None else f"best_model_for_{dataset_name}"
+                    args.output_dir, folder_name
             )
             # Modified: use self.best_metrics to track result due to read/write file in multi processing would cause file sync error 
             if metric_name not in self.best_metrics:
@@ -161,7 +164,7 @@ class SaveBestModelsCallback(TrainerCallback):
                         f.write(json.dumps({metric_name:metric_value})+'\n')
                         f.write(json.dumps(metrics)+'\n')
                 if not args.no_saving:
-                    trainer._save_checkpoint(model, trial, metrics=None, checkpoint_folder=checkpoint_folder)
+                    trainer._save_checkpoint(model, trial, metrics=None, checkpoint_folder=folder_name)
                 print(f"best model for {dataset_name}|{task_name} saved at {checkpoint_folder}")
         return control
 
@@ -260,7 +263,7 @@ class UIETrainer(Seq2SeqTrainer):
                     predict_metrics = predict_results.metrics
                     output_path = os.path.join(self.args.output_dir, f"test_metrics_each_epoch.jsonl")
                     predict_metrics['epoch'] = epoch
-                    if epoch <= 1:
+                    if epoch <= 1 and self.args.evaluation_strategy == IntervalStrategy.EPOCH:
                         f = open(output_path, "w")
                     else:
                         f = open(output_path, "a+")
@@ -674,16 +677,18 @@ class UIETrainer(Seq2SeqTrainer):
         with torch.no_grad():
             if has_labels:
                 with self.autocast_smart_context_manager():
+                    '''
                     #need to be deleted
                     tasks = inputs.pop('task')
                     datasets = inputs.pop('dataset')
+                    '''
 
                     outputs = model(**inputs)
                     if self.args.embedding_type is not None:
                         encoder_last_h = outputs["encoder_last_hidden_state"]
                         decoder_last_h = outputs["decoder_hidden_states"][-1]
                         embeddings = self._get_embedding(encoder_last_h, decoder_last_h)
-                    
+                    '''
                     #need to be deleted
                     decoded_strings = self.tokenizer.batch_decode(inputs['input_ids'])
                     embeddings_np = embeddings.cpu().numpy()
@@ -698,6 +703,7 @@ class UIETrainer(Seq2SeqTrainer):
                     for item in tosave:
                         f.write(json.dumps(item)+'\n')
                     f.close()
+                    '''
                                     
                 if self.label_smoother is not None:
                     loss = self.label_smoother(outputs, inputs["labels"]).mean().detach()

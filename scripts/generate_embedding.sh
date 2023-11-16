@@ -12,9 +12,9 @@ port=$(shuf -i25000-30000 -n1)
 model_name_or_path=ZWK/InstructUIE
 
 
-for TASK_CONFIG in EMBED_INSTRUCTION
+for TASK_CONFIG in EMBED_INSTRUCTION_with_sentence
 do
-    CUDA_VISIBLE_DEVICES=0,1,2,3 python src/generate_embedding.py \
+    CUDA_VISIBLE_DEVICES=1,2,3 python src/generate_embedding.py \
     --do_predict \
     --model_name_or_path ${model_name_or_path} \
     --data_dir ./data/ie_instruct \
@@ -26,8 +26,8 @@ do
     --min_positive_labels -1 \
     --output_dir ./output/${TASK_CONFIG}/iuie_mean_of_encoder\
     --input_record_file iuie.record \
-    --per_device_train_batch_size 8 \
-    --per_device_eval_batch_size 8 \
+    --per_device_train_batch_size 1 \
+    --per_device_eval_batch_size 1 \
     --gradient_accumulation_steps 32 \
     --learning_rate 5e-05 \
     --num_train_epochs 0 \
@@ -57,7 +57,7 @@ do
     --only_save_best_model True \
     --predict_each_dataset_with_best False \
     --overwrite_cache \
-    --embedding_prompt io \
+    --embedding_prompt iota \
     --embedding_type mean_of_encoder \
     --predict_with_generate \
     --overwrite_cache \

@@ -24,6 +24,7 @@ from typing import List
 import datasets
 from hashlib import md5
 import torch
+from transformers import AutoTokenizer
 
 logger = datasets.logging.get_logger(__name__)
 TASK_CONFIG_FILES = {"train": "train_tasks.json", "dev": "dev_tasks.json", "test": "test_tasks.json"}
@@ -82,6 +83,8 @@ class UIEConfig(datasets.BuilderConfig):
             min_negative_labels=-1,
             min_positive_labels=-1,
             ordered_prompt=True,
+            model_name_or_path=None,
+            model_cache_dir=None,
             **kwargs
     ):
         super().__init__(*args, **kwargs)
@@ -97,6 +100,8 @@ class UIEConfig(datasets.BuilderConfig):
         self.min_negative_labels = min_negative_labels
         self.min_positive_labels = min_positive_labels
         self.ordered_prompt = ordered_prompt
+        self.model_name_or_path = model_name_or_path
+        self.model_cache_dir = model_cache_dir
 
     def _parse_instruction(self, instruction_file):
         """
@@ -208,7 +213,8 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                         "instruction": datasets.Value("string"),
                         "ground_truth": datasets.Value("string"),
                         "answer_prefix": datasets.Value("string")
-                    }
+                    },
+                    "input_ids": datasets.Sequence(datasets.Value("int64")),
                 }
             ),
             supervised_keys=None
@@ -1056,7 +1062,11 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
     def _generate_examples(self, path=None, task_config=None, max_num_instances_per_task=None, subset=None):
         """Yields examples."""
         logger.info(f"Generating tasks from = {path}")
-
+        tokenizer = AutoTokenizer.from_pretrained(
+            self.config.model_name_or_path,
+            cache_dir=self.config.model_cache_dir,
+            use_fast=True,
+        )
         for task in task_config:
             if task == "NER":
                 load_func = self.load_NER_dataset
@@ -1110,4 +1120,5 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                                         subset):
                     idx += 1
                     instances.append(sample)
+                    sample['input_ids'] = tokenizer.encode(sample['Instance']['sentence'], add_special_tokens=True)
                     yield f"{task}##{ds_path}##{idx}", sample
