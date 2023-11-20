@@ -284,7 +284,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         else:
             return random.choice(task_instructions)
         
-    def _construct_uie_prompt(self, datasets, task):
+    def _construct_uie_prompt(self, datasets, task = None):
         generation_class = Text2SpotAsoc
 
         prompts, record_schema = convert_graph(
