@@ -7,7 +7,7 @@ import IPython
 logger = logging.getLogger(__name__)
 
 SUPPORTED_DECODER_MODELS = ['codegen', 'bloomz', 'gpt-neox', 'llama']
-SUPPORTED_SEQ2SEQ_MODELS = ['t5', 'flan-t5', 'ZWK/InstructUIE', './huggingface/InstructUIE']
+SUPPORTED_SEQ2SEQ_MODELS = ['t5', 'flan-t5', 'ZWK/InstructUIE', './huggingface/InstructUIE', 'luyaojie/uie-large-en']
 
 
 def check_model(model_name, supported_models):
@@ -89,8 +89,6 @@ class DataCollatorForUIE:
             label = instance['Instance']['label']
             labels.append(label)
             instruction = self.get_instruction(instance)
-
-            
             source = instruction
             tokenized_source = self.tokenizer(source)["input_ids"]
             if len(tokenized_source) <= self.max_source_length:

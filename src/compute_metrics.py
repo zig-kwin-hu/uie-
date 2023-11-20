@@ -117,7 +117,6 @@ def compute_grouped_metrics(predictions, references, groups, xlingual=False):
     return results
 
 def compute_f1(dataset, predictions):
-    f1 = 0
     EvaluatorDict = {
         'RE':EvaluatorRE,
         'EE':EvaluatorEvent,

@@ -27,12 +27,30 @@ class UIEPredictionOutput(NamedTuple):
     embeddings: Optional[Union[np.ndarray, Tuple[np.ndarray]]]
     inputs: Optional[Union[np.ndarray, Tuple[np.ndarray]]]
 
+
+def postprocess_text(x_str, tokenizer):
+    # Clean `bos` `eos` `pad` for cleaned text
+    to_remove_token_list = list()
+    # if tokenizer.bos_token:
+    #     to_remove_token_list += [tokenizer.bos_token]
+    if tokenizer.eos_token:
+        to_remove_token_list += [tokenizer.eos_token]
+    if tokenizer.pad_token:
+        to_remove_token_list += [tokenizer.pad_token]
+    
+    for to_remove_token in to_remove_token_list:
+        x_str = x_str.replace(to_remove_token, '')
+
+    return x_str.strip()
+
 def skip_instructions(model, predictions_ids, tokenizer, dataset, ignore_idx=-100):
     predictions_ids = np.where(predictions_ids == ignore_idx, tokenizer.pad_token_id, predictions_ids)
 
     predictions = tokenizer.batch_decode(
-        predictions_ids, skip_special_tokens=True, clean_up_tokenization_spaces=True
+        predictions_ids, skip_special_tokens=False, clean_up_tokenization_spaces=True
     )
+
+    predictions = [postprocess_text(pred, tokenizer) for pred in predictions]
 
     final_predictions = []
     if check_model(model.config._name_or_path, SUPPORTED_DECODER_MODELS):

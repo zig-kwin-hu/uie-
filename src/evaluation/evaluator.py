@@ -8,6 +8,8 @@ import numpy as np
 import os
 import random
 
+from universal_ie.predict_parser.spotasoc_predict_parser import SpotAsocPredictParser
+
 class MetricBase:
     def __init__(self):
         raise NotImplementedError()
@@ -414,6 +416,7 @@ class EvaluatorBase:
         self.last = dict()
         self._init_audit()
         self._init_metric()
+        self.predict_parser = SpotAsocPredictParser()
     
     def _init_metric(self):
         # must be overrided to init self.metric
@@ -469,7 +472,7 @@ class EvaluatorBase:
         self.last['y_pred'] = y_pred
         self.last['metric'] = self.metric
 
-        self._update_audit()
+        # self._update_audit()
     
     def get_metric(self) -> float:
         return self.metric.get_metric()
@@ -580,16 +583,13 @@ class EvaluatorNER(EvaluatorBase):
         ]
     def _extract(self, json_data, predict):
         # person: a; person: b; org: c
-        entity_truth = set()
-        for ent in self._format(json_data['Instance']['ground_truth']).split(';'):
-            ent = self._format(ent)
-            entity_truth.add(ent)
+        well_formed_list, counter = self.predict_parser.decode(
+            gold_list=[json_data['Instance']['ground_truth']], pred_list=[predict]
+        )
         
-        entity_pred = set()
-        for ent in self._format(predict).split(';'):
-            # 部分地名可能会包含逗号，因此这里不检查逗号个数
-            ent = self._format(ent)
-            entity_pred.add(ent)
+        entity_truth = set(well_formed_list[0]['gold_spot'])
+        entity_pred = set(well_formed_list[0]['pred_spot'])
+        
         return entity_truth, entity_pred
 
 class EvaluatorRE(EvaluatorBase):
@@ -690,10 +690,12 @@ class EvaluatorEET(EvaluatorBase):
     def _init_metric(self):
         self.metric = MetricAcc()
     def _extract(self, json_data, predict: str):
-        y_truth = json_data['Instance']['ground_truth']
-        y_truth = self._format(y_truth)
-
-        y_pred = self._format(predict)
+        well_formed_list, counter = self.predict_parser.decode(
+            gold_list=[json_data['Instance']['ground_truth']], pred_list=[predict]
+        )
+        y_truth = well_formed_list[0]['gold_spot']
+        y_pred = well_formed_list[0]['pred_spot']
+        
         return y_truth, y_pred
 
 class EvaluatorEEA(EvaluatorBase):

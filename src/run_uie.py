@@ -69,6 +69,8 @@ from uie_dataset import gen_cache_path
 from uie_trainer import UIETrainer, DenserEvalCallback, SavePeftModelCallback, SaveMetricsCallback, skip_instructions, SaveBestModelsCallback, SkipEpochEvalCallback
 from compute_metrics import compute_f1, compute_metrics, compute_grouped_metrics
 
+from universal_ie.structure_marker import span_start, type_start, type_end, text_start, span_start, spot_prompt, asoc_prompt
+
 # off wandb
 os.environ['WANDB_DISABLED'] = "True"
 # os.environ['CUDA_VISIBLE_DEVICES'] = '0'
@@ -461,6 +463,15 @@ def main():
         use_fast=model_args.use_fast_tokenizer,
         revision=model_args.model_revision,
         use_auth_token=True if model_args.use_auth_token else None,
+    )
+
+    to_add_special_token = list()
+    for special_token in [type_start, type_end, text_start, span_start, spot_prompt, asoc_prompt]:
+        if special_token not in tokenizer.get_vocab():
+            to_add_special_token += [special_token]
+
+    tokenizer.add_special_tokens(
+        {"additional_special_tokens": tokenizer.special_tokens_map_extended['additional_special_tokens'] + to_add_special_token}
     )
     
     device_map = None
