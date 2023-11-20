@@ -117,7 +117,7 @@ def convert_relations(re_id, tokens, re_type, re_entities):
 def convert_graph(
     generation_class: GenerationFormat,
     datasets: List,
-    task: Text,
+    task: Text = None,
     label_mapper: Dict = None,
 ):
     convertor: Text2SpotAsoc = generation_class(
