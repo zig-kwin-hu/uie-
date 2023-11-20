@@ -24,9 +24,8 @@ def convert_sent_LLM_UIE(datasets: List):
             uie_ents = convert_entities(example['entities'])
         if example.get('events'):
             uie_evs = convert_events(example['events'])
-        
-
-        # uie_rels = convert_relations(example.re_idx, sent_tokens, example.type, [example.obj, example.subj])
+        if example.get('relations'):
+            uie_rels = convert_relations(example['relations'])
         
         uie_sent = Sentence(
             tokens=sent_tokens,
@@ -41,6 +40,8 @@ def convert_sent_LLM_UIE(datasets: List):
 def convert_entities(entities):
     uie_ents = []
     for entity in entities:
+        if entity['type'] == 'NA' or entity['type'] == '':
+            continue
         start, end = entity['pos']
         indexes = list(range(start, end))
         tokens = entity['name'].split(' ')
@@ -59,6 +60,8 @@ def convert_entities(entities):
 def convert_events(events): 
     uie_evs = []
     for event in events:
+        if event['type'] == 'NA' or event['type'] == '':
+            continue
         args = []
         # for arg in event['arguments']:
         #     label = Label(arg["role"])
@@ -87,29 +90,31 @@ def convert_events(events):
     
     return uie_evs
 
-def convert_relations(re_id, tokens, re_type, re_entities):
+def convert_relations(relations):
     uie_rels = []
-    uie_entities = []
-    for entity in re_entities:
-        start = entity['start'] + 1
-        end = entity['end']
-        rel_tok = tokens[start:end]
-        indexes = list(range(start, end))
-        entity = Entity(
+    for relation in relations:
+        if relation['type'] == 'NA' or relation['type'] == '':
+            continue
+        head = Entity(
             span=Span(
-                tokens=rel_tok,
-                indexes=indexes,
-                text=" ".join(rel_tok)
+                tokens=relation['head']['name'].split(" "),
+                indexes=[],
+                text=relation['head']
             ),
-            label=Label('entity'),
-            record_id=re_id
+            label=Label("")
         )
-        uie_entities.append(entity)
-
-    uie_rel = UIERelation(
-        uie_entities[0], uie_entities[1], Label(re_type), re_id, re_id
-    )
-    uie_rels.append(uie_rel)
+        tail = Entity(
+            span=Span(
+                tokens=relation['tail']['name'].split(" "),
+                indexes=[],
+                text=relation['tail']
+            ),
+            label=Label("")
+        )
+        uie_rel = UIERelation(
+            head, tail, Label(relation['type'])
+        )
+        uie_rels.append(uie_rel)
 
     return uie_rels
 
