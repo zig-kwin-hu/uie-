@@ -61,6 +61,7 @@ from accelerate.utils import get_balanced_memory
 from model.bloom import BloomForCausalLM_WithLoss
 from model.codegen import CodeGenForCausalLM_WithLoss
 from model.gpt_neox import GPTNeoXForCausalLM_WithLoss
+from universal_ie.predict_parser.spotasoc_predict_parser import SpotAsocPredictParser
 # from utils.lorahub import set_lorahub_model
 
 from uie_collator import DataCollatorForUIE
@@ -701,8 +702,21 @@ def main():
         result["gen_len"] = np.mean(prediction_lens)
         result = {k: round(v, 4) for k, v in result.items()}
         if save_prefix is not None:
+            predict_parser = SpotAsocPredictParser()
             with open(os.path.join(training_args.output_dir, f"{save_prefix}_eval_predictions.jsonl"), "w") as fout:
                 for example, pred in zip(dataset, decoded_preds):
+                    well_formed_list, counter = predict_parser.decode(
+                        gold_list=[example['Instance']['ground_truth']], pred_list=[pred]
+                    )
+                    
+                    if example['Task'] in ['NER', 'EET']:
+                        key = 'spot'
+                    else:
+                        key = 'asoc'
+                    
+                    example["Instance"]["ground_truth"] = well_formed_list[0][f'gold_{key}']
+                    pred = well_formed_list[0][f'pred_{key}']
+
                     fout.write(json.dumps({
                         "Task": example["Task"],
                         "Dataset": example["Dataset"],

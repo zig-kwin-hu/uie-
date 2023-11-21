@@ -607,33 +607,12 @@ class EvaluatorRE(EvaluatorBase):
         ]
 
     def _extract(self, json_data, predict):
-        y_truth = set()
-        # pattern = r'(?:head entity:)(.+?)(?:\s*,\s*)+(?:tail entity:)(.+?)(?:\s*,\s*)+(?:relation:)(.+?)(?:\s*,\s*)*$'
-        for rel in self._format(json_data['Instance']['ground_truth']).split(';'):   # FIXME:字段名可能有变
-            # type为'no_relation'或'NA'的关系现在不忽略，下同
-            # elem = re.findall(pattern, rel)
-            # if len(elem) == 0:
-            #     continue
-            # elem = ','.join(self._format(i) for i in elem[0])
-            # elem = self._format(elem)
-            elem = self._format(rel)
-            if ':' not in elem:
-                continue
-            y_truth.add(elem)
+        well_formed_list, counter = self.predict_parser.decode(
+            gold_list=[json_data['Instance']['ground_truth']], pred_list=[predict]
+        )
+        y_truth = well_formed_list[0]['gold_asoc']
+        y_pred = well_formed_list[0]['pred_asoc']
 
-        y_pred = set()
-        # 如果模型输出'no relation'或'[]'，则认为其预测的关系集合为空集，但这里并不需要做特殊判别
-        for rel in self._format(predict).split(';'):
-            # 因为字段中可能本身就存在逗号，此处不再进行数量校验
-            # elem = re.findall(pattern, rel)
-            # if len(elem) == 0:
-            #     continue
-            # elem = ','.join(self._format(i) for i in elem[0])
-            # elem = self._format(elem)       # 没有一个format解决不了的问题，如果有，就多加几个
-            elem = self._format(rel)
-            if ':' not in elem:
-                continue
-            y_pred.add(elem)
         return y_truth, y_pred
 
 class EvaluatorMRC(EvaluatorBase):

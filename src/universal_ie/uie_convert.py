@@ -95,19 +95,20 @@ def convert_relations(relations):
     for relation in relations:
         if relation['type'] == 'NA' or relation['type'] == '':
             continue
+
         head = Entity(
             span=Span(
                 tokens=relation['head']['name'].split(" "),
-                indexes=[],
-                text=relation['head']
+                indexes=list(range(relation['head']['pos'][0], relation['head']['pos'][1])),
+                text=relation['head']['name']
             ),
             label=Label("")
         )
         tail = Entity(
             span=Span(
                 tokens=relation['tail']['name'].split(" "),
-                indexes=[],
-                text=relation['tail']
+                indexes=list(range(relation['head']['pos'][0], relation['head']['pos'][1])),
+                text=relation['tail']['name']
             ),
             label=Label("")
         )

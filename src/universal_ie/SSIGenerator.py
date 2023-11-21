@@ -85,13 +85,16 @@ class DynamicSSIGenerator():
         """
         negative_asoc = self.sample_negative(postive=positive, candidates=candidates or self.asoc_list, k=self.negative if not evaluate else self.eval_negative)
         prefix_asoc_candidates = positive + negative_asoc
-        converted_asoc_prefix = self.convert_prefix(
+        asoc_prefix_ids = self.convert_prefix(
             candidates=prefix_asoc_candidates,
             prompt=self.asoc_prompt,
             mapper=self.asoc_dict,
             ordered_prompt=True if evaluate else self.ordered_prompt,
         )
-        return converted_asoc_prefix, negative_asoc
+
+        asoc_prefix = self.tokenizer.decode(asoc_prefix_ids)
+
+        return asoc_prefix_ids, asoc_prefix, negative_asoc
 
     def full_spot(self, shuffle=False):
         # Random Prompt + Shuffle
