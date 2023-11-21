@@ -709,13 +709,16 @@ def main():
                         gold_list=[example['Instance']['ground_truth']], pred_list=[pred]
                     )
                     
-                    if example['Task'] in ['NER', 'EET']:
-                        key = 'spot'
+                    if example['Task'] == 'EEA':
+                        example["Instance"]["ground_truth"] = [asoc for rec in well_formed_list[0]['gold_record'] for asoc in rec['asocs']]
+                        pred = [asoc for rec in well_formed_list[0]['pred_record'] for asoc in rec['asocs']]
                     else:
-                        key = 'asoc'
-                    
-                    example["Instance"]["ground_truth"] = well_formed_list[0][f'gold_{key}']
-                    pred = well_formed_list[0][f'pred_{key}']
+                        if example['Task'] in ['NER', 'EET']:
+                            key = 'spot'
+                        else:
+                            key = 'asoc'
+                        example["Instance"]["ground_truth"] = well_formed_list[0][f'gold_{key}']
+                        pred = well_formed_list[0][f'pred_{key}']
 
                     fout.write(json.dumps({
                         "Task": example["Task"],

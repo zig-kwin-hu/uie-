@@ -682,16 +682,11 @@ class EvaluatorEEA(EvaluatorBase):
         self.metric = MetricF1()
     def _extract(self, json_data, predict: str):
         y_truth = set()
-        for item in json_data['Instance']['ground_truth'].split(';'):
-            if ':' not in item:
-                continue
-            y_truth.add(self._format(item))
-        
-        y_pred = set()
-        for item in self._format(predict).split(';'):
-            if ':' not in item:
-                continue
-            y_pred.add(self._format(item))
+        well_formed_list, counter = self.predict_parser.decode(
+            gold_list=[json_data['Instance']['ground_truth']], pred_list=[predict]
+        )
+        y_truth = set(asoc for rec in well_formed_list[0]['gold_record'] for asoc in rec['asocs'])
+        y_pred = set(asoc for rec in well_formed_list[0]['pred_record'] for asoc in rec['asocs'])
         
         return y_truth, y_pred
 

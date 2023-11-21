@@ -284,7 +284,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         else:
             return random.choice(task_instructions)
         
-    def _construct_uie_prompt(self, datasets, task = None):
+    def _construct_uie_prompt(self, datasets):
         generation_class = Text2SpotAsoc
 
         prompts, record_schema = convert_graph(
@@ -376,7 +376,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         sample_template = {"Task": "NER", "Dataset": dataset_name, "Samples": [], "subset": subset}
 
         instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
-        uie_responses, record_schema = self._construct_uie_prompt(instances, sample_template["Task"])
+        uie_responses, record_schema = self._construct_uie_prompt(instances)
         if len(record_schema.type_list) < len(labels):
             record_schema.type_list = labels
 
@@ -583,7 +583,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         sample_template = {"Task": "RE", "Dataset": dataset_name, "Samples": [], "subset": subset}
         instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
 
-        uie_responses, record_schema = self._construct_uie_prompt(instances, sample_template["Task"])
+        uie_responses, record_schema = self._construct_uie_prompt(instances)
         if len(record_schema.type_list) < len(labels):
             record_schema.type_list = labels
         
@@ -667,7 +667,15 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
 
         # TODO, reconstruct Event Instruction to two stage
         # TODO, check
+        print('EETRETET')
         instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        instances = self._split_by_events(instances)
+
+        # Empty arguments to prevent UIE SSI capture undesired feature
+        for instance in instances:
+            for ev in instance["events"]:
+                ev['arguments'] = []
+        
         uie_responses, record_schema = self._construct_uie_prompt(instances)
         if len(record_schema.type_list) < len(labels):
             record_schema.type_list = labels
@@ -686,7 +694,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             positive = [ ev['type'] for ev in instance['events'] ]
             spot_prefix_ids, spot_prefix, positive_spot, negative_spot = uie_sampler.sample_spot(positive, True)
             example = sample_template.copy()
-
+            
             instruction = spot_prefix + text_start + ' ' + "{0}"
             
             example["Instance"] = {
@@ -700,28 +708,55 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
 
             yield example
     
+    def _split_by_events(self, instances):
+        splitted = []
+
+        for instance in instances:
+            for event in instance['events']:
+                new_instance = {
+                    **instance,
+                    "events": [event]
+                }
+                splitted.append(new_instance)
+        
+        print('Split instances by event: {}'.format(len(splitted)))
+        return splitted
+
     def load_EEA_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
 
         instances, labels = self._load_dataset(dataset_path, labels_path)
+        role_list = list(set(v for value in labels.values() for v in value))
         sample_template = {"Task": "EEA", "Dataset": dataset_name, "Samples": [], "subset": subset}
 
         # TODO, reconstruct Event Instruction to two stage
         # TODO, check
         instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        instances = self._split_by_events(instances)
+        uie_responses, record_schema = self._construct_uie_prompt(instances)
+        if len(record_schema.type_list) < len(labels):
+            record_schema.role_list = role_list
 
-        for idx, instance in enumerate(instances):
+        uie_sampler = DynamicSSIGenerator(
+            tokenizer=self.tokenizer,
+            schema=record_schema,
+            positive_rate=1,
+            negative=-1,
+            eval_negative=-1,
+            ordered_prompt=True
+        )
+        
+        for (idx, instance), label in zip(enumerate(instances), uie_responses):
             if len(instance['events']) > 1:
                 raise "Error: EEA dataset should only have one event."
-            labels_str = ', '.join(labels[instance['events'][0]['type']])
             example = sample_template.copy()
-            instruction = self._get_instruction('EEA')
-            instruction += "Event type: " + instance['events'][0]['type'] + " \n " + " Option: " + labels_str + " \n" + "Text: " + "{0}" + " \n" + "Answer:"
 
-            event = instance['events'][0]
-            event_arguments = [" {}: {}".format(argument['name'], argument['role']) for
-                               argument in event['arguments']]
+            positive_ev = [ ev['type'] for ev in instance['events'] ]
+            spot_prefix_ids, spot_prefix, positive_spot, negative_spot = uie_sampler.sample_spot(positive_ev, negative=0)
 
-            label = " None" if not event_arguments else ";".join(event_arguments)
+            positive_roles = [ arg['role'] for ev in instance['events'] for arg in ev['arguments'] ]
+            asoc_prefix_ids, asoc_prefix, negative_asoc = uie_sampler.sample_asoc(positive=positive_roles, candidates=labels[positive_ev[0]])
+
+            instruction = spot_prefix + asoc_prefix + text_start + ' ' + "{0}"
 
             example["Instance"] = {
                 "id": str(idx),

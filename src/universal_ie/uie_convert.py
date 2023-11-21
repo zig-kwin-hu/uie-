@@ -4,7 +4,6 @@ import sys
 sys.path.append("../")
 
 from typing import Any, Dict, List, Text, Union
-from tqdm import tqdm
 
 from .generation_format import GenerationFormat
 from .structure_marker import BaseStructureMarker
@@ -63,19 +62,18 @@ def convert_events(events):
         if event['type'] == 'NA' or event['type'] == '':
             continue
         args = []
-        # for arg in event['arguments']:
-        #     label = Label(arg["role"])
-        #     arg_idx = list(range(arg["start"], arg["end"]))
-        #     arg_tok = tokens[arg["start"]: arg["end"]]
-        #     entity = Entity(
-        #         span=Span(
-        #             tokens=arg_tok,
-        #             indexes=arg_idx,
-        #             text=" ".join(arg_tok)
-        #         ),
-        #         label=Label(arg["role"])
-        #     )
-        #     args.append((label, entity))
+        for idx, arg in enumerate(event['arguments']):
+            label = Label(arg["role"])
+            arg_tok = arg['name'].split(" ")
+            entity = Entity(
+                span=Span(
+                    tokens=arg_tok,
+                    indexes=[idx],
+                    text=arg['name']
+                ),
+                label=label
+            )
+            args.append((label, entity))
 
         uie_ev = Event(
             span=Span(
@@ -123,7 +121,6 @@ def convert_relations(relations):
 def convert_graph(
     generation_class: GenerationFormat,
     datasets: List,
-    task: Text = None,
     label_mapper: Dict = None,
 ):
     convertor: Text2SpotAsoc = generation_class(
@@ -134,15 +131,13 @@ def convert_graph(
 
     prompts = []
     for instance in uie_datasets:
-        # if task == 'EEA':
-        #     instance.events
         converted_graph = convertor.annonote_graph(
             tokens=instance.tokens,
             entities=instance.entities,
             events=instance.events,
             relations=instance.relations
         )
-        
+
         # offset_events = [
         #     event.to_offset(evt_label_mapper=label_mapper)
         #     for event in instance.events
