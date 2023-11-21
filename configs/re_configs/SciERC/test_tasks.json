@@ -1,7 +1,7 @@
 {
 	"RE":[
 		{
-	        "sampling strategy": "full",
+	        "sampling strategy": "random",
 		    "dataset name": "SciERC"
 		}
 	]
