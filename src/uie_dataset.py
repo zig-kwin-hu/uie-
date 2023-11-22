@@ -284,7 +284,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         else:
             return random.choice(task_instructions)
         
-    def _construct_uie_prompt(self, datasets, skip_na = True):
+    def _construct_uie_labels(self, datasets, skip_na = True):
         generation_class = Text2SpotAsoc
 
         prompts, record_schema = convert_graph(
@@ -377,7 +377,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         sample_template = {"Task": "NER", "Dataset": dataset_name, "Samples": [], "subset": subset}
 
         instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
-        uie_responses, record_schema = self._construct_uie_prompt(instances)
+        uie_labels, record_schema = self._construct_uie_labels(instances)
         if len(record_schema.type_list) < len(labels):
             record_schema.type_list = labels
 
@@ -389,7 +389,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             ordered_prompt=True
         )
 
-        for (idx, instance), label in zip(enumerate(instances), uie_responses):
+        for (idx, instance), label in zip(enumerate(instances), uie_labels):
             positive = [ ent['type'] for ent in instance['entities'] if ent['type'] not in ['', 'NA']]
             spot_prefix_ids, spot_prefix, positive_spot, negative_spot = uie_sampler.sample_spot(positive)
             example = sample_template.copy()
@@ -583,8 +583,8 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         sample_template = {"Task": "RE", "Dataset": dataset_name, "Samples": [], "subset": subset}
         instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
 
-        uie_responses, record_schema = self._construct_uie_prompt(instances)
-        uie_responses_w_na, _ = self._construct_uie_prompt(instances, False)
+        uie_labels, record_schema = self._construct_uie_labels(instances)
+        uie_labels_w_na, _ = self._construct_uie_labels(instances, False)
         
         if len(record_schema.type_list) < len(labels):
             record_schema.type_list = labels
@@ -597,7 +597,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             ordered_prompt=True
         )
 
-        for (idx, instance), label, ground_truth in zip(enumerate(instances), uie_responses, uie_responses_w_na):
+        for (idx, instance), label, ground_truth in zip(enumerate(instances), uie_labels, uie_labels_w_na):
             positive = [ ent['type'] for ent in instance['relations'] ]
             asoc_prefix_ids, asoc_prefix, negative_asoc = uie_sampler.sample_asoc(positive)
             example = sample_template.copy()
@@ -677,7 +677,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             for ev in instance["events"]:
                 ev['arguments'] = []
         
-        uie_responses, record_schema = self._construct_uie_prompt(instances)
+        uie_labels, record_schema = self._construct_uie_labels(instances)
         if len(record_schema.type_list) < len(labels):
             record_schema.type_list = labels
         
@@ -689,7 +689,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             ordered_prompt=True
         )
 
-        for (idx, instance), label in zip(enumerate(instances), uie_responses):
+        for (idx, instance), label in zip(enumerate(instances), uie_labels):
             example = sample_template.copy()
             positive = [ ev['type'] for ev in instance['events'] ]
             spot_prefix_ids, spot_prefix, positive_spot, negative_spot = uie_sampler.sample_spot(positive)
@@ -732,7 +732,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         # TODO, check
         instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
         instances = self._split_by_events(instances)
-        uie_responses, record_schema = self._construct_uie_prompt(instances)
+        uie_labels, record_schema = self._construct_uie_labels(instances)
         if len(record_schema.type_list) < len(labels):
             record_schema.role_list = role_list
 
@@ -744,7 +744,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             ordered_prompt=True
         )
         
-        for (idx, instance), label in zip(enumerate(instances), uie_responses):
+        for (idx, instance), label in zip(enumerate(instances), uie_labels):
             if len(instance['events']) > 1:
                 raise "Error: EEA dataset should only have one event."
             example = sample_template.copy()
