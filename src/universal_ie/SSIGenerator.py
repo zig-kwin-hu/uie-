@@ -24,7 +24,6 @@ class DynamicSSIGenerator():
         schema: RecordSchema,
         positive_rate=1,
         negative=5,
-        eval_negative=-1,
         ordered_prompt=False
     ) -> None:
         self.spot_dict = self.get_ordered_dict(schema.type_list, tokenizer)
@@ -36,7 +35,6 @@ class DynamicSSIGenerator():
         self.text_start = tokenizer.get_vocab()[text_start]
         self.positive_rate = positive_rate if positive_rate > 0 and positive_rate < 1 else 1
         self.negative = negative
-        self.eval_negative = eval_negative
         self.ordered_prompt = ordered_prompt
         logger.info(f"Meta Sample, Negative: {self.negative}, Ordered Prompt: {self.ordered_prompt}")
         self.tokenizer = tokenizer
@@ -61,11 +59,11 @@ class DynamicSSIGenerator():
         
         return list(negative_set)
 
-    def sample_spot(self, positive, evaluate=False, negative=None):
+    def sample_spot(self, positive, negative=None):
         """ Sample spot
         """
         neg = negative if negative != None else self.negative
-        negative_spot = self.sample_negative(postive=positive, candidates=self.spot_list, k=neg if not evaluate else self.eval_negative)
+        negative_spot = self.sample_negative(postive=positive, candidates=self.spot_list, k=neg)
         positive_spot = random.sample(positive, math.floor(len(positive) * self.positive_rate))
 
         prefix_spot_candidates = positive_spot + negative_spot
@@ -73,23 +71,23 @@ class DynamicSSIGenerator():
             candidates=prefix_spot_candidates,
             prompt=self.spot_prompt,
             mapper=self.spot_dict,
-            ordered_prompt=True if evaluate else self.ordered_prompt,
+            ordered_prompt=self.ordered_prompt,
         )
 
         spot_prefix = self.tokenizer.decode(spot_prefix_ids)
 
         return spot_prefix_ids, spot_prefix, positive_spot, negative_spot
 
-    def sample_asoc(self, positive, evaluate=False, candidates=[]):
+    def sample_asoc(self, positive, candidates=[]):
         """ Sample Asoc
         """
-        negative_asoc = self.sample_negative(postive=positive, candidates=candidates or self.asoc_list, k=self.negative if not evaluate else self.eval_negative)
+        negative_asoc = self.sample_negative(postive=positive, candidates=candidates or self.asoc_list, k=self.negative)
         prefix_asoc_candidates = positive + negative_asoc
         asoc_prefix_ids = self.convert_prefix(
             candidates=prefix_asoc_candidates,
             prompt=self.asoc_prompt,
             mapper=self.asoc_dict,
-            ordered_prompt=True if evaluate else self.ordered_prompt,
+            ordered_prompt=self.ordered_prompt,
         )
 
         asoc_prefix = self.tokenizer.decode(asoc_prefix_ids)

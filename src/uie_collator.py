@@ -7,7 +7,7 @@ import IPython
 logger = logging.getLogger(__name__)
 
 SUPPORTED_DECODER_MODELS = ['codegen', 'bloomz', 'gpt-neox', 'llama']
-SUPPORTED_SEQ2SEQ_MODELS = ['t5', 'flan-t5', 'ZWK/InstructUIE', './huggingface/InstructUIE', 'luyaojie/uie-large-en']
+SUPPORTED_SEQ2SEQ_MODELS = ['t5', 'flan-t5', 'ZWK/InstructUIE', './huggingface/InstructUIE', 'luyaojie/uie-large-en', 'luyaojie/uie-base-en']
 
 
 def check_model(model_name, supported_models):

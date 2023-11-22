@@ -284,12 +284,13 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         else:
             return random.choice(task_instructions)
         
-    def _construct_uie_prompt(self, datasets):
+    def _construct_uie_prompt(self, datasets, skip_na = True):
         generation_class = Text2SpotAsoc
 
         prompts, record_schema = convert_graph(
             generation_class,
-            datasets=datasets
+            datasets=datasets,
+            skip_NA=skip_na
         )
 
         return prompts, record_schema
@@ -385,13 +386,12 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             schema=record_schema,
             positive_rate=1,
             negative=-1,
-            eval_negative=-1,
             ordered_prompt=True
         )
 
         for (idx, instance), label in zip(enumerate(instances), uie_responses):
             positive = [ ent['type'] for ent in instance['entities'] if ent['type'] not in ['', 'NA']]
-            spot_prefix_ids, spot_prefix, positive_spot, negative_spot = uie_sampler.sample_spot(positive, True)
+            spot_prefix_ids, spot_prefix, positive_spot, negative_spot = uie_sampler.sample_spot(positive)
             example = sample_template.copy()
             
             instruction = spot_prefix + text_start + ' ' + "{0}"
@@ -584,6 +584,8 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
 
         uie_responses, record_schema = self._construct_uie_prompt(instances)
+        uie_responses_w_na, _ = self._construct_uie_prompt(instances, False)
+        
         if len(record_schema.type_list) < len(labels):
             record_schema.type_list = labels
         
@@ -592,13 +594,12 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             schema=record_schema,
             positive_rate=1,
             negative=-1,
-            eval_negative=-1,
             ordered_prompt=True
         )
 
-        for (idx, instance), label in zip(enumerate(instances), uie_responses):
+        for (idx, instance), label, ground_truth in zip(enumerate(instances), uie_responses, uie_responses_w_na):
             positive = [ ent['type'] for ent in instance['relations'] ]
-            asoc_prefix_ids, asoc_prefix, negative_asoc = uie_sampler.sample_asoc(positive, True)
+            asoc_prefix_ids, asoc_prefix, negative_asoc = uie_sampler.sample_asoc(positive)
             example = sample_template.copy()
 
             instruction = asoc_prefix + text_start + ' ' + "{0}"
@@ -607,7 +608,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 "id": str(idx),
                 "sentence": instance['sentence'],
                 "label": label,
-                "ground_truth": label,
+                "ground_truth": ground_truth,
                 "instruction": instruction,
                 "answer_prefix": self.config.prompt["response_split"]
             }
@@ -685,14 +686,13 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             schema=record_schema,
             positive_rate=1,
             negative=-1,
-            eval_negative=-1,
             ordered_prompt=True
         )
 
         for (idx, instance), label in zip(enumerate(instances), uie_responses):
             example = sample_template.copy()
             positive = [ ev['type'] for ev in instance['events'] ]
-            spot_prefix_ids, spot_prefix, positive_spot, negative_spot = uie_sampler.sample_spot(positive, True)
+            spot_prefix_ids, spot_prefix, positive_spot, negative_spot = uie_sampler.sample_spot(positive)
             example = sample_template.copy()
             
             instruction = spot_prefix + text_start + ' ' + "{0}"
@@ -741,7 +741,6 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             schema=record_schema,
             positive_rate=1,
             negative=-1,
-            eval_negative=-1,
             ordered_prompt=True
         )
         

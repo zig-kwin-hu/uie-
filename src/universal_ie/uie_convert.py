@@ -10,7 +10,7 @@ from .structure_marker import BaseStructureMarker
 from universal_ie.text2spotasoc import Text2SpotAsoc
 from .ie_format import Label, Sentence, Event, Span, Entity, Relation as UIERelation
 
-def convert_sent_LLM_UIE(datasets: List):
+def convert_sent_LLM_UIE(datasets: List, skip_NA = True):
     uie_sentences: List[Sentence] = []
     for example in datasets:
         sent_tokens = example['sentence'].split(" ")
@@ -24,7 +24,7 @@ def convert_sent_LLM_UIE(datasets: List):
         if example.get('events'):
             uie_evs = convert_events(example['events'])
         if example.get('relations'):
-            uie_rels = convert_relations(example['relations'])
+            uie_rels = convert_relations(example['relations'], skip_NA)
         
         uie_sent = Sentence(
             tokens=sent_tokens,
@@ -88,11 +88,13 @@ def convert_events(events):
     
     return uie_evs
 
-def convert_relations(relations):
+def convert_relations(relations, skip_none = True):
     uie_rels = []
     for relation in relations:
-        if relation['type'] == 'NA' or relation['type'] == '':
+        if skip_none and (relation['type'] == 'NA' or relation['type'] == ''):
             continue
+        if relation['type'] == '':
+            relation['type'] = 'NA'
 
         head = Entity(
             span=Span(
@@ -122,12 +124,13 @@ def convert_graph(
     generation_class: GenerationFormat,
     datasets: List,
     label_mapper: Dict = None,
+    skip_NA = True
 ):
     convertor: Text2SpotAsoc = generation_class(
         structure_maker=BaseStructureMarker(),
         label_mapper=label_mapper
     )
-    uie_datasets = convert_sent_LLM_UIE(datasets)
+    uie_datasets = convert_sent_LLM_UIE(datasets, skip_NA)
 
     prompts = []
     for instance in uie_datasets:
