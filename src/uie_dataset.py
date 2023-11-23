@@ -586,8 +586,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         uie_labels, record_schema = self._construct_uie_labels(instances)
         uie_labels_w_na, _ = self._construct_uie_labels(instances, False)
         
-        if len(record_schema.type_list) < len(labels):
-            record_schema.type_list = labels
+        record_schema.type_list = labels
         
         uie_sampler = DynamicSSIGenerator(
             tokenizer=self.tokenizer,
@@ -598,7 +597,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         )
 
         for (idx, instance), label, ground_truth in zip(enumerate(instances), uie_labels, uie_labels_w_na):
-            positive = [ ent['type'] for ent in instance['relations'] ]
+            positive = [ ent['type'] for ent in instance['relations'] if ent['type'] ]
             asoc_prefix_ids, asoc_prefix, negative_asoc = uie_sampler.sample_asoc(positive)
             example = sample_template.copy()
 

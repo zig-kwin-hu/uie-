@@ -91,9 +91,9 @@ def convert_events(events):
 def convert_relations(relations, skip_none = True):
     uie_rels = []
     for idx, relation in enumerate(relations):
-        if skip_none and (relation['type'] == 'NA' or relation['type'] == ''):
+        if (relation['type'] == 'NA' or relation['type'] == '' or not relation['type']):
             continue
-        if relation['type'] == '':
+        if not relation['type']:
             relation['type'] = 'NA'
         
         head = Entity(
