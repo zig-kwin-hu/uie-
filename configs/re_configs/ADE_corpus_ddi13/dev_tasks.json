@@ -3,6 +3,10 @@
         {
             "sampling strategy": "full",
             "dataset name": "ADE_corpus"
+        },
+        {
+            "sampling strategy": "full",
+            "dataset name": "ddi13"
         }
     ]
 }

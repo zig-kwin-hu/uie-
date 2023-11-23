@@ -1,0 +1,24 @@
+{
+	"RE":[
+		{
+	        "sampling strategy": "full",
+		    "dataset name": "GIDS"
+		},
+        {
+	        "sampling strategy": "full",
+		    "dataset name": "semval-RE"
+		},
+        {
+	        "sampling strategy": "full",
+		    "dataset name": "ADE_corpus"
+		},
+        {
+	        "sampling strategy": "full",
+		    "dataset name": "finred"
+		},
+        {
+	        "sampling strategy": "full",
+		    "dataset name": "ddi13"
+		}
+	]	
+}

@@ -206,7 +206,10 @@ class Text2SpotAsoc(GenerationFormat):
         def add_asoc(spot, asoc: Label, tail):
             spot_key = (tuple(spot.span.indexes), self.get_label_str(spot.label))
             asoc_dict[spot_key] += [(tail.span.indexes, tail, self.get_label_str(asoc))]
-
+            if self.get_label_str(asoc) is None:
+                print('asoc',asoc.label_name)
+                print('self.label_mapper',self.label_mapper)
+                raise Exception
             self.record_role_map[self.get_label_str(spot.label)].add(self.get_label_str(asoc))
 
         for entity in entities:
@@ -215,6 +218,7 @@ class Text2SpotAsoc(GenerationFormat):
         for relation in relations:
             add_spot(spot=relation.arg1)
             add_asoc(spot=relation.arg1, asoc=relation.label, tail=relation.arg2)
+
 
         for event in events:
             add_spot(spot=event)
@@ -239,11 +243,14 @@ class Text2SpotAsoc(GenerationFormat):
 
                 spot_instance['asoc'] += [(asoc, tail.span.text)]
             spot_asoc_instance += [spot_instance]
-
-        target_text = convert_spot_asoc(
-            spot_asoc_instance,
-            structure_maker=self.structure_maker,
-        )
+        try:
+            target_text = convert_spot_asoc(
+                spot_asoc_instance,
+                structure_maker=self.structure_maker,
+            )
+        except:
+            print(spot_asoc_instance)
+            raise Exception
 
         source_text = tokens_to_str(tokens)
         spot_labels = set([label for _, label in spot_dict.keys()])

@@ -2,7 +2,7 @@
     "RE": [
         {
             "sampling strategy": "full",
-            "dataset name": "ADE_corpus"
+            "dataset name": "semval-RE"
         }
     ]
 }

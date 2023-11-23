@@ -1,8 +1,8 @@
 {
-	"RE":[
-		{
-	        "sampling strategy": "full",
-		    "dataset name": "ADE_corpus"
-		}
-	]
+    "RE": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "ADE_corpus"
+        }
+    ]
 }

@@ -24,7 +24,11 @@ def convert_sent_LLM_UIE(datasets: List):
         if example.get('events'):
             uie_evs = convert_events(example['events'])
         if example.get('relations'):
-            uie_rels = convert_relations(example['relations'])
+            try:
+                uie_rels = convert_relations(example['relations'])
+            except:
+                print(example)
+                raise ValueError("convert relations error")
         
         uie_sent = Sentence(
             tokens=sent_tokens,
@@ -91,7 +95,7 @@ def convert_events(events):
 def convert_relations(relations):
     uie_rels = []
     for relation in relations:
-        if relation['type'] == 'NA' or relation['type'] == '':
+        if relation['type'] == 'NA' or relation['type'] == '' or relation['type'] is None:
             continue
 
         head = Entity(
@@ -137,7 +141,6 @@ def convert_graph(
             events=instance.events,
             relations=instance.relations
         )
-
         # offset_events = [
         #     event.to_offset(evt_label_mapper=label_mapper)
         #     for event in instance.events

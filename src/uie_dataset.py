@@ -303,12 +303,12 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             prompt = self.config.prompt['prompt_no_option'].format(instruction=instruction, text='{0}')
         return prompt
         
-    def _sampling_dataset(self, instances, sampling_strategy, max_num_instances):
+    def _sampling_dataset(self, instances, sampling_strategy, max_num_instances, subset):
         print("Sampling strategy: {}".format(sampling_strategy))
         print('Total instances: {}'.format(len(instances)))
         if sampling_strategy == 'random' and max_num_instances is not None and max_num_instances >= 0:
             instances = instances[:max_num_instances]
-        if (max_num_instances!=None) and self.config.over_sampling and (len(instances) < max_num_instances):
+        if subset == 'train' and (max_num_instances!=None) and self.config.over_sampling and (len(instances) < max_num_instances):
             origin_instances = instances.copy()
             while len(instances) < max_num_instances:
                 instances.append(random.choice(origin_instances))
@@ -581,7 +581,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
     def load_RE_dataset(self, dataset_path, labels_path, dataset_name, sampling_strategy, max_num_instances, subset):
         instances, labels = self._load_dataset(dataset_path, labels_path)
         sample_template = {"Task": "RE", "Dataset": dataset_name, "Samples": [], "subset": subset}
-        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances, subset)
 
         uie_responses, record_schema = self._construct_uie_prompt(instances)
         if len(record_schema.type_list) < len(labels):
@@ -597,7 +597,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         )
 
         for (idx, instance), label in zip(enumerate(instances), uie_responses):
-            positive = [ ent['type'] for ent in instance['relations'] ]
+            positive = [ ent['type'] for ent in instance['relations'] if ent['type'] not in ['', 'NA']]
             asoc_prefix_ids, asoc_prefix, negative_asoc = uie_sampler.sample_asoc(positive, True)
             example = sample_template.copy()
 
@@ -802,6 +802,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
 
             # load dataset
             for dataset in task_config[task]:
+                print("Loading {} dataset {} subset".format(dataset["dataset name"], subset))
                 ds_name = dataset["dataset name"]
                 sampling_strategy = dataset.get("sampling strategy", "random")
                 ds_path = os.path.join(path, task, ds_name, subset + '.json')

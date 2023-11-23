@@ -1,0 +1,12 @@
+{
+    "RE": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "SciERC"
+        },
+        {
+            "sampling strategy": "full",
+            "dataset name": "conll04"
+        }
+    ]
+}
