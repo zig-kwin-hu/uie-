@@ -90,16 +90,16 @@ def convert_events(events):
 
 def convert_relations(relations, skip_none = True):
     uie_rels = []
-    for relation in relations:
+    for idx, relation in enumerate(relations):
         if skip_none and (relation['type'] == 'NA' or relation['type'] == ''):
             continue
         if relation['type'] == '':
             relation['type'] = 'NA'
-
+        
         head = Entity(
             span=Span(
                 tokens=relation['head']['name'].split(" "),
-                indexes=list(range(relation['head']['pos'][0], relation['head']['pos'][1])),
+                indexes=list(range(relation['head']['pos'][0], relation['head']['pos'][1])) if relation['head']['pos'] else [idx],
                 text=relation['head']['name']
             ),
             label=Label("")
@@ -107,7 +107,7 @@ def convert_relations(relations, skip_none = True):
         tail = Entity(
             span=Span(
                 tokens=relation['tail']['name'].split(" "),
-                indexes=list(range(relation['head']['pos'][0], relation['head']['pos'][1])),
+                indexes=list(range(relation['head']['pos'][0], relation['head']['pos'][1])) if relation['tail']['pos'] else [idx],
                 text=relation['tail']['name']
             ),
             label=Label("")
