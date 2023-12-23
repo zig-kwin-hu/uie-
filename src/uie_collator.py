@@ -7,7 +7,7 @@ import IPython
 logger = logging.getLogger(__name__)
 
 SUPPORTED_DECODER_MODELS = ['codegen', 'bloomz', 'gpt-neox', 'llama']
-SUPPORTED_SEQ2SEQ_MODELS = ['t5', 'flan-t5', 'ZWK/InstructUIE', './huggingface/InstructUIE', 'luyaojie/uie-large-en']
+SUPPORTED_SEQ2SEQ_MODELS = ['t5', 'flan-t5', 'ZWK/InstructUIE', './huggingface/InstructUIE', 'luyaojie/uie-large-en', 'luyaojie/uie-base-en']
 
 
 def check_model(model_name, supported_models):
@@ -46,6 +46,8 @@ class DataCollatorForUIE:
             model_inputs = self.decoder_call(batch, return_tensors)
         elif check_model(model_name, SUPPORTED_SEQ2SEQ_MODELS):
             model_inputs = self.seq2seq_call(batch, return_tensors)
+        elif 'uie' in model_name:
+            model_inputs = self.seq2seq_call(batch, return_tensors)
         else:
             raise ValueError('Unsupport model {}!'.format(model_name))
 
@@ -55,7 +57,8 @@ class DataCollatorForUIE:
         # "instructions \n options \n {0} \n Answer: "
         instruction = instance['Instance']["instruction"]
         content = instance['Instance']['sentence']
-
+        #print('content', content)
+        #print('instruction', instruction)
         # add task/ds prefix
         prefix = ''
         if self.add_task_name:
@@ -66,7 +69,7 @@ class DataCollatorForUIE:
             prefix = prefix + ds_name + '\n' if prefix else instance['Dataset'] + '\n'
         if prefix:
             instruction = prefix + instruction
-
+        #print('instruction', instruction)
         # TODO, support few shot
         # add few shot samples
         samples = ''

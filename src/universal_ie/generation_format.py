@@ -63,7 +63,7 @@ class GenerationFormat:
     def annotate_relation_extraction(self, tokens: List[str],
                                      relations: List[Relation]): pass
 
-    def output_schema(self):
+    def output_schema(self, existing_record_schema: RecordSchema=None):
         """自动导出 Schema 文件
         每个 Schema 文件包含三行
             - 第一行为 Record 的类别名称列表
@@ -84,7 +84,22 @@ class GenerationFormat:
         role_list = list(role_set)
         role_list.sort()
         random.shuffle(role_list)
-
+        if existing_record_schema is not None:
+            extend_dict = existing_record_schema.type_role_dict
+            for record in extend_dict:
+                if record not in record_list:
+                    record_list.append(record)
+                    self.record_role_map[record] = extend_dict[record]
+                    role_list.extend(extend_dict[record])
+                else:
+                    self.record_role_map[record].extend(extend_dict[record])
+                    role_list.extend(extend_dict[record])
+                self.record_role_map[record] = list(set(self.record_role_map[record]))
+                self.record_role_map[record].sort()
+                role_list = list(set(role_list))
+                role_list.sort()
+                record_list = list(set(record_list))
+                record_list.sort()
         record_schema = RecordSchema(type_list=record_list,
                                      role_list=role_list,
                                      type_role_dict=self.record_role_map

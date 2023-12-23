@@ -1,0 +1,12 @@
+{
+    "RE": [
+        {
+            "sampling strategy": "full",
+            "dataset name": "ADE_corpus_renamed"
+        },
+        {
+            "sampling strategy": "full",
+            "dataset name": "ddi13"
+        }
+    ]
+}

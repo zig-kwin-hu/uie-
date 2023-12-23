@@ -305,7 +305,10 @@ class DataTrainingArguments:
         default=True,
         metadata={"help": "Whether to sort prompt options in instruction."}
     )
-    
+    test_file: Optional[str] = field(
+        default=None,
+        metadata={"help": "The test file for evaluation."},
+    )
 
 
 @dataclass
@@ -362,6 +365,10 @@ class UIETrainingArguments(Seq2SeqTrainingArguments):
     no_resume_training: Optional[bool] = field(
         default=False,
         metadata={"help": "If true, do not resume training from checkpoint."},
+    )
+    eval_with_repetition_penalty: Optional[bool] = field(
+        default=False,
+        metadata={"help": "If true, do evaluation with repetition penalty."},
     )
 
 
@@ -425,7 +432,7 @@ def main():
     
     if model_args.lora_moe_paths:
         model_args.lora_moe_paths = model_args.lora_moe_paths.split(',')
-
+    
     # Get the UIE dataset
     raw_datasets = load_dataset(
         os.path.join(CURRENT_DIR, "uie_dataset.py"),
@@ -434,7 +441,7 @@ def main():
         instruction_file=data_args.instruction_file,
         instruction_strategy=data_args.instruction_strategy,
         prompt_file=data_args.prompt_file,
-        cache_dir=data_cache_dir,  # for debug, change dataset size, otherwise open it
+        cache_dir=data_cache_dir,  # for debug, change dataset size, otherwise o pen it
         max_num_instances_per_task=data_args.max_num_instances_per_task,
         max_num_instances_per_eval_task=data_args.max_num_instances_per_eval_task,
         num_examples=data_args.num_examples,
@@ -443,6 +450,7 @@ def main():
         min_positive_labels=data_args.min_positive_labels,
         model_name_or_path=model_args.model_name_or_path,
         model_cache_dir=model_args.cache_dir,
+        test_file=data_args.test_file,
     )
     raw_datasets.cleanup_cache_files()
     print(data_cache_dir)
@@ -504,6 +512,7 @@ def main():
         task_type = TaskType.SEQ_2_SEQ_LM
         if not training_args.deepspeed:
             device_map = "auto"
+
     model = model_class.from_pretrained(
         model_args.model_name_or_path,
         from_tf=bool(".ckpt" in model_args.model_name_or_path),
@@ -514,7 +523,7 @@ def main():
         device_map=device_map
     )
     model.resize_token_embeddings(len(tokenizer))
-
+    
     if (
             hasattr(model.config, "max_position_embeddings")
             and model.config.max_position_embeddings < data_args.max_source_length
@@ -614,7 +623,7 @@ def main():
     #         weight_strategy='random',
     #         min_weight_score=-1.5, max_weight_score=1.5
     #     )
-
+    
     if training_args.do_train:
         if "train" not in raw_datasets:
             raise ValueError("--do_train requires a train dataset")
@@ -641,6 +650,8 @@ def main():
         eval_dataset = predict_dataset
     # Data collator
     label_pad_token_id = -100 if data_args.ignore_pad_token_for_loss else tokenizer.pad_token_id
+    
+    
     data_collator = DataCollatorForUIE(
         tokenizer,
         model=model,
@@ -656,6 +667,7 @@ def main():
         input_record_file=data_args.input_record_file,
         return_loss_mask=not 'llama' in model_args.model_name_or_path.lower()
     )
+
     
     # we don't want to remove unused columns because we will prepare each batch during training,
     # and some of the information will also be used in evaluation.
@@ -751,9 +763,12 @@ def main():
         else data_args.max_target_length
     )
 
+    
+
     num_beams = data_args.num_beams if data_args.num_beams is not None else training_args.generation_num_beams
     repetition_penalty = data_args.repetition_penalty
 
+    
     trainer = UIETrainer(
         model=model,
         args=training_args,
@@ -769,7 +784,7 @@ def main():
         repetition_penalty=repetition_penalty,
         pad_token_id=tokenizer.pad_token_id,
     )
-    
+    print('trainer is model parallel: ', trainer.is_model_parallel)
     # For load_best_model() in transformers trainer, because PyTorch doesn't support to load a quantized model from checkpoint into int8, so we need PyTorch's state_dict.
     # if training_args.use_lora:
     #     old_state_dict = model.state_dict
@@ -780,12 +795,12 @@ def main():
     #     ).__get__(model, type(model))
     
     model.config.use_cache = False
-
+    
     if torch.__version__ >= "2" and sys.platform != "win32":
         model = torch.compile(model)
         
     all_metrics = {"run_name": training_args.run_name}
-
+    
     # Training
     # 训练epoch数，按照 num_train_epochs 传入，在trainer中解析
     # TODO, train debug, bloomz, flan-t5
@@ -802,13 +817,13 @@ def main():
             trained_epoch_num = int(trained_steps / training_steps_per_epoch)
             #trainer.args.num_train_epochs = training_args.num_train_epochs - trained_epoch_num
             #print('left num_train_epochs: ', trainer.args.num_train_epochs)
-        print('resume_from_checkpoint: ', training_args.resume_from_checkpoint)
         if not training_args.use_lora and not training_args.no_resume_training:
+            print('resume training', checkpoint)    
             train_result = trainer.train(resume_from_checkpoint=checkpoint)
         else:
             train_result = trainer.train()
-        if not training_args.no_saving:
-            trainer.save_model()  # Saves the tokenizer too for easy upload
+        #if not training_args.no_saving:
+            #trainer.save_model()  # Saves the tokenizer too for easy upload
 
         metrics = train_result.metrics
         max_train_samples = (
@@ -826,8 +841,28 @@ def main():
     # Evaluation
     results = {}
     # in case the batch is shorter than max length, the output should be padded
-
+    
     if training_args.do_predict:
+        if not training_args.do_train and training_args.resume_from_checkpoint is not None:
+            #resume from checkpoint, then do prediction
+            print('resume_from_checkpoint for prediction: ', training_args.resume_from_checkpoint)
+            model = model_class.from_pretrained(training_args.resume_from_checkpoint)#device_map's default value is None
+            
+            trainer = UIETrainer(
+                    model=model,
+                    args=training_args,
+                    train_dataset=train_dataset if training_args.do_train else None,
+                    eval_dataset=eval_dataset if training_args.do_eval else None,
+                    tokenizer=tokenizer,
+                    data_collator=data_collator,
+                    compute_metrics=compute_f1_metrics,
+                    callbacks=callbacks,
+                    max_new_tokens=max_new_tokens,
+                    num_beams=num_beams,
+                    repetition_penalty=repetition_penalty,
+                    pad_token_id=tokenizer.pad_token_id,
+                )
+            
         logger.info("*** Prediction ***")
         logger.info("*** Loading CheckPoint ***")
         
@@ -899,6 +934,7 @@ def main():
                     with open(path, "w") as f:
                         json.dump(metrics, f, indent=4, sort_keys=True)
         else:
+            print(f"start prediction")
             predict_results = trainer.predict(
                 predict_dataset,
                 metric_key_prefix="predict",

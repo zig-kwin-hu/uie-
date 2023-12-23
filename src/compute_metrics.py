@@ -125,7 +125,7 @@ def compute_f1(dataset, predictions):
         'EEA':EvaluatorEEA
     }
     task_dict = dict()
-    
+    print('compute_f1')
     for data, pred in zip(dataset, predictions):
         task_name = data['Task']
         dataset_name = data['Dataset']

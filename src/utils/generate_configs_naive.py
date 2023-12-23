@@ -16,5 +16,5 @@ def generate_config_files_per_task(task, datasets, config_dir):
         json.dump(config, open(output_path, 'w'), indent=4)
 if __name__ == '__main__':
     config_dir = './configs'
-    generate_config_files_per_task('RE', ['SciERC','conll04'], config_dir)
+    generate_config_files_per_task('NER', ['PolyglotNER_sample_20000'], config_dir)
     

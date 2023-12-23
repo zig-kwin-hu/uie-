@@ -90,6 +90,7 @@ class UIEConfig(datasets.BuilderConfig):
             ordered_prompt=True,
             model_name_or_path=None,
             model_cache_dir=None,
+            test_file=None,
             **kwargs
     ):
         super().__init__(*args, **kwargs)
@@ -107,6 +108,8 @@ class UIEConfig(datasets.BuilderConfig):
         self.ordered_prompt = ordered_prompt
         self.model_name_or_path = model_name_or_path
         self.model_cache_dir = model_cache_dir
+        self.test_file = test_file
+        self.record_schemas = {}
 
     def _parse_instruction(self, instruction_file):
         """
@@ -284,12 +287,14 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         else:
             return random.choice(task_instructions)
         
-    def _construct_uie_prompt(self, datasets):
+    def _construct_uie_labels(self, datasets, skip_na = True, existing_record_schema = None):
         generation_class = Text2SpotAsoc
 
         prompts, record_schema = convert_graph(
             generation_class,
-            datasets=datasets
+            datasets=datasets,
+            skip_NA=skip_na,
+            existing_record_schema=existing_record_schema,
         )
 
         return prompts, record_schema
@@ -375,8 +380,9 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
 
         sample_template = {"Task": "NER", "Dataset": dataset_name, "Samples": [], "subset": subset}
 
-        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
-        uie_responses, record_schema = self._construct_uie_prompt(instances)
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances, subset)
+        uie_labels, record_schema = self._construct_uie_labels(instances,existing_record_schema=self.config.record_schemas.get(dataset_name, None))
+        self.config.record_schemas[dataset_name] = record_schema
         if len(record_schema.type_list) < len(labels):
             record_schema.type_list = labels
 
@@ -385,13 +391,12 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             schema=record_schema,
             positive_rate=1,
             negative=-1,
-            eval_negative=-1,
             ordered_prompt=True
         )
 
-        for (idx, instance), label in zip(enumerate(instances), uie_responses):
+        for (idx, instance), label in zip(enumerate(instances), uie_labels):
             positive = [ ent['type'] for ent in instance['entities'] if ent['type'] not in ['', 'NA']]
-            spot_prefix_ids, spot_prefix, positive_spot, negative_spot = uie_sampler.sample_spot(positive, True)
+            spot_prefix_ids, spot_prefix, positive_spot, negative_spot = uie_sampler.sample_spot(positive)
             example = sample_template.copy()
             
             instruction = spot_prefix + text_start + ' ' + "{0}"
@@ -413,7 +418,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         sample_template = {"Task": "ES", "Dataset": dataset_name, "Samples": [], "subset": subset}
 
         labels_str = ', '.join(labels)
-        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances, subset)
 
         for idx, instance in enumerate(instances):
             example = sample_template.copy()
@@ -448,7 +453,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         sample_template = {"Task": "ET", "Dataset": dataset_name, "Samples": [], "subset": subset}
 
         labels_str = ', '.join(labels)
-        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances, subset)
 
         for idx, instance in enumerate(instances):
             example = sample_template.copy()
@@ -489,7 +494,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         sample_template = {"Task": "EP", "Dataset": dataset_name, "Samples": [], "subset": subset}
 
         labels_str = ', '.join(labels)
-        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances, subset)
 
         for idx, instance in enumerate(instances):
             example = sample_template.copy()
@@ -533,7 +538,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         sample_template = {"Task": "EPR", "Dataset": dataset_name, "Samples": [], "subset": subset}
 
         labels_str = ', '.join(labels)
-        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances, subset)
 
         for idx, instance in enumerate(instances):
             example = sample_template.copy()
@@ -582,23 +587,22 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         instances, labels = self._load_dataset(dataset_path, labels_path)
         sample_template = {"Task": "RE", "Dataset": dataset_name, "Samples": [], "subset": subset}
         instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances, subset)
-
-        uie_responses, record_schema = self._construct_uie_prompt(instances)
-        if len(record_schema.type_list) < len(labels):
-            record_schema.type_list = labels
+        uie_labels, record_schema = self._construct_uie_labels(instances, existing_record_schema=self.config.record_schemas.get(dataset_name, None))
+        uie_labels_w_na, _ = self._construct_uie_labels(instances, False)
+        self.config.record_schemas[dataset_name] = record_schema
+        record_schema.type_list = labels
         
         uie_sampler = DynamicSSIGenerator(
             tokenizer=self.tokenizer,
             schema=record_schema,
             positive_rate=1,
             negative=-1,
-            eval_negative=-1,
             ordered_prompt=True
         )
 
-        for (idx, instance), label in zip(enumerate(instances), uie_responses):
+        for (idx, instance), label, ground_truth in zip(enumerate(instances), uie_labels, uie_labels_w_na):
             positive = [ ent['type'] for ent in instance['relations'] if ent['type'] not in ['', 'NA']]
-            asoc_prefix_ids, asoc_prefix, negative_asoc = uie_sampler.sample_asoc(positive, True)
+            asoc_prefix_ids, asoc_prefix, negative_asoc = uie_sampler.sample_asoc(positive)
             example = sample_template.copy()
 
             instruction = asoc_prefix + text_start + ' ' + "{0}"
@@ -607,7 +611,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 "id": str(idx),
                 "sentence": instance['sentence'],
                 "label": label,
-                "ground_truth": label,
+                "ground_truth": ground_truth,
                 "instruction": instruction,
                 "answer_prefix": self.config.prompt["response_split"]
             }
@@ -621,7 +625,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         # TODO, reconstruct Event Instruction to two stage
         # TODO, check
         labels_str = f'Event type: {labels[0]}, Arguments type: {labels[1]}.'
-        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances, subset)
 
         for idx, instance in enumerate(instances):
             example = sample_template.copy()
@@ -668,7 +672,7 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
         # TODO, reconstruct Event Instruction to two stage
         # TODO, check
         print('EETRETET')
-        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances, subset)
         instances = self._split_by_events(instances)
 
         # Empty arguments to prevent UIE SSI capture undesired feature
@@ -676,7 +680,8 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             for ev in instance["events"]:
                 ev['arguments'] = []
         
-        uie_responses, record_schema = self._construct_uie_prompt(instances)
+        uie_labels, record_schema = self._construct_uie_labels(instances, existing_record_schema=self.config.record_schemas.get(dataset_name, None))
+        self.config.record_schemas[dataset_name] = record_schema
         if len(record_schema.type_list) < len(labels):
             record_schema.type_list = labels
         
@@ -685,14 +690,13 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             schema=record_schema,
             positive_rate=1,
             negative=-1,
-            eval_negative=-1,
             ordered_prompt=True
         )
 
-        for (idx, instance), label in zip(enumerate(instances), uie_responses):
+        for (idx, instance), label in zip(enumerate(instances), uie_labels):
             example = sample_template.copy()
             positive = [ ev['type'] for ev in instance['events'] ]
-            spot_prefix_ids, spot_prefix, positive_spot, negative_spot = uie_sampler.sample_spot(positive, True)
+            spot_prefix_ids, spot_prefix, positive_spot, negative_spot = uie_sampler.sample_spot(positive)
             example = sample_template.copy()
             
             instruction = spot_prefix + text_start + ' ' + "{0}"
@@ -730,9 +734,10 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
 
         # TODO, reconstruct Event Instruction to two stage
         # TODO, check
-        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances)
+        instances = self._sampling_dataset(instances, sampling_strategy, max_num_instances, subset)
         instances = self._split_by_events(instances)
-        uie_responses, record_schema = self._construct_uie_prompt(instances)
+        uie_labels, record_schema = self._construct_uie_labels(instances,existing_record_schema=self.config.record_schemas.get(dataset_name, None))
+        self.config.record_schemas[dataset_name] = record_schema
         if len(record_schema.type_list) < len(labels):
             record_schema.role_list = role_list
 
@@ -741,11 +746,10 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
             schema=record_schema,
             positive_rate=1,
             negative=-1,
-            eval_negative=-1,
             ordered_prompt=True
         )
         
-        for (idx, instance), label in zip(enumerate(instances), uie_responses):
+        for (idx, instance), label in zip(enumerate(instances), uie_labels):
             if len(instance['events']) > 1:
                 raise "Error: EEA dataset should only have one event."
             example = sample_template.copy()
@@ -805,9 +809,12 @@ class UIEInstructions(datasets.GeneratorBasedBuilder):
                 print("Loading {} dataset {} subset".format(dataset["dataset name"], subset))
                 ds_name = dataset["dataset name"]
                 sampling_strategy = dataset.get("sampling strategy", "random")
-                ds_path = os.path.join(path, task, ds_name, subset + '.json')
+                if subset == 'test' and self.config.test_file != None:
+                    ds_path = self.config.test_file
+                else:
+                    ds_path = os.path.join(path, task, ds_name, subset + '.json')
                 labels_path = os.path.join(path, task, ds_name, 'labels.json')
-                assert os.path.exists(ds_path)
+                assert os.path.exists(ds_path), "Dataset path {} not exists!".format(ds_path)
                 assert os.path.exists(labels_path)
                 
                 idx = -1

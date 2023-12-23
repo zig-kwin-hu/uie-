@@ -1,4 +1,5 @@
 import torch
+import shutil
 from transformers import GenerationConfig
 from transformers.trainer_seq2seq import Seq2SeqTrainer
 from transformers.trainer import *
@@ -148,7 +149,6 @@ class SaveBestModelsCallback(TrainerCallback):
     def __init__(self,**kwargs):
         super().__init__(**kwargs)
         self.best_metrics = {}
-        print('best model callback initialized')
 
     def on_evaluate(self, args, state, control, metrics=None, model = None, trainer = None, trial = None, non_saving_datasets=[], **kwargs):
         assert isinstance(trainer, UIETrainer)
@@ -184,6 +184,27 @@ class SaveBestModelsCallback(TrainerCallback):
                 if not args.no_saving:
                     trainer._save_checkpoint(model, trial, metrics=None, checkpoint_folder=folder_name)
                 print(f"best model for {dataset_name}|{task_name} saved at {checkpoint_folder}")
+                import glob
+                deepspeed_checkpoint_dirs = sorted(glob.glob(checkpoint_folder+"/global_step*"))
+                try:
+                    lastest = open(os.path.join(checkpoint_folder, "latest"), "r").read().strip()
+                    lastest_step = int(lastest.split('global_step')[1])
+                except:
+                    #maybe it is being written by other processes, wait for a while and try again
+                    import time
+                    time.sleep(1)
+                    lastest = open(os.path.join(checkpoint_folder, "latest"), "r").read().strip()
+                    lastest_step = int(lastest.split('global_step')[1])
+                print('lastest_step', lastest_step)
+                for d in deepspeed_checkpoint_dirs:
+                    d_step = int(d.split('global_step')[1])
+                    if d_step != lastest_step:
+                        shutil.rmtree(d, ignore_errors=True)#delete the old checkpoints
+                    else:
+                        print('keep', d)
+
+
+                
         return control
 
 class UIETrainer(Seq2SeqTrainer):
@@ -219,8 +240,7 @@ class UIETrainer(Seq2SeqTrainer):
         self.add_callback(PrinterCallback if self.args.disable_tqdm else DEFAULT_PROGRESS_CALLBACK)
         
         self.non_saving_datasets = non_saving_datasets
-        print('init self.args.should_save',self.args.should_save)
-
+        
         #init params for predictions
         self.predict_dataset = predict_dataset
         self.max_new_tokens = max_new_tokens
@@ -260,11 +280,12 @@ class UIETrainer(Seq2SeqTrainer):
                         eval_dataset=eval_dataset,
                         ignore_keys=ignore_keys_for_eval,
                         metric_key_prefix=f"eval_{eval_dataset_name}",
+                        pad_token_id=self.pad_token_id,#added by huzikun, so that the generated text will not be too long.
                     )
                     metrics.update(dataset_metrics)
             else:
                 # Rewrite: Modified evaluate by passing additional trial param
-                metrics = self.evaluate(ignore_keys=ignore_keys_for_eval, trial=trial)
+                metrics = self.evaluate(ignore_keys=ignore_keys_for_eval, trial=trial, pad_token_id=self.pad_token_id)
             
             if self.args.test_with_eval:
                 predict_results = self.predict(
@@ -349,7 +370,7 @@ class UIETrainer(Seq2SeqTrainer):
 
         eval_dataloader = self.get_eval_dataloader(eval_dataset)
         start_time = time.time()
-
+        print('gen_kwargs', gen_kwargs)
         eval_loop = self.prediction_loop if self.args.use_legacy_prediction_loop else self.evaluation_loop
         output = eval_loop(
             eval_dataloader,
@@ -360,7 +381,6 @@ class UIETrainer(Seq2SeqTrainer):
             ignore_keys=ignore_keys,
             metric_key_prefix=metric_key_prefix,
         )
-
         total_batch_size = self.args.eval_batch_size * self.args.world_size
         if f"{metric_key_prefix}_jit_compilation_time" in output.metrics:
             start_time += output.metrics[f"{metric_key_prefix}_jit_compilation_time"]
@@ -668,7 +688,7 @@ class UIETrainer(Seq2SeqTrainer):
             gen_kwargs["max_new_tokens"] = gen_kwargs["max_length"]
             
         generation_config = GenerationConfig(**gen_kwargs)
-
+        #assert generation_config.repetition_penalty == self.repetition_penalty
         # prepare generation inputs
         # some encoder-decoder models can have varying encder's and thus
         # varying model input names
@@ -741,6 +761,14 @@ class UIETrainer(Seq2SeqTrainer):
             labels = None
         if self.args.embedding_type is not None:
             return (loss, generated_tokens, labels, embeddings)
+        #find the first eos token
+        '''
+        eos_token_id = self.tokenizer.eos_token_id
+        eos_index = (generated_tokens == eos_token_id).nonzero(as_tuple=True)
+        print('generated_total_length', sum(eos_index[1]).item())
+        eos_index = (labels == eos_token_id).nonzero(as_tuple=True)
+        print('labels_total_length', sum(eos_index[1]).item())
+        '''
         return (loss, generated_tokens, labels)
     def _get_embedding(self, encoder_last_h, decoder_last_h):
         if self.args.embedding_type == 'mean_of_encoder':
@@ -942,7 +970,6 @@ class UIETrainer(Seq2SeqTrainer):
 
         test_dataloader = self.get_test_dataloader(test_dataset)
         start_time = time.time()
-
         eval_loop = self.prediction_loop if self.args.use_legacy_prediction_loop else self.evaluation_loop
         if self.args.embedding_type is not None:
             output, all_embeddings, all_inputs = eval_loop(
@@ -966,6 +993,7 @@ class UIETrainer(Seq2SeqTrainer):
 
         self.control = self.callback_handler.on_predict(self.args, self.state, self.control, output.metrics)
         self._memory_tracker.stop_and_update_metrics(output.metrics)
+        
         if self.args.embedding_type is not None:
             return UIEPredictionOutput(predictions=output.predictions, label_ids=output.label_ids, metrics=output.metrics, embeddings=all_embeddings, inputs=all_inputs)
         else:

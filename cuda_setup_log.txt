@@ -1,0 +1,4 @@
+package_dir: /storage/zkhu/anaconda3/envs/iuie/lib/python3.10/site-packages/bitsandbytes
+binary_name: libbitsandbytes_cuda117.so
+binary_path: /storage/zkhu/anaconda3/envs/iuie/lib/python3.10/site-packages/bitsandbytes/libbitsandbytes_cuda117.so
+binary_path.exists(): True
